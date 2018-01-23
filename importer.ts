@@ -13,6 +13,10 @@ const HEADERS = {
   'Accepts': 'application/json'
 }
 
+function log(msg: string, ...args: any[]) {
+  console.log(`${new Date().toISOString()} - ${msg}`, ...args);
+}
+
 function isPrivate(v: any) {
   return `${v}`.toLowerCase() !== 'true'
 }
@@ -48,7 +52,9 @@ class BitbucketImporter {
   async upload(pkey: string, key: string, slug: string) {
     let path = `${TEMP}/${slug}`;
     try {
+      log(`Cloning Project ${pkey} Repository ${key}`);
       await exec(`git clone --mirror https://${this.serverCredentials}@${this.serverHost}/scm/${pkey}/${key}.git ${path}`);
+      log(`Pushing Project ${pkey} Repository ${key}`);
       await exec(`git push --mirror https://${this.cloudCredentials}@bitbucket.org/${this.cloudOwner}/${slug}.git`, { cwd: path })
     } finally {
       await util.promisify(rimraf);
@@ -77,13 +83,13 @@ class BitbucketImporter {
     try {
       let response = await req;
       if (response.type !== 'error') {
-        console.log(`${action} ... done`);
+        log(`${action} ... done`);
         return response;
       } else {
         throw new Error('Failed');
       }
     } catch (e) {
-      console.log(`${action} ... failed - ${e.message}`);
+      log(`${action} ... failed - ${e.message}`);
       throw e;
     }
   }
@@ -206,6 +212,7 @@ class BitbucketImporter {
   }
 
   async run() {
+    log('Staring');
     await this.deleteRepositories();
     await this.deleteProjects();
     await this.importProjects();
@@ -217,7 +224,7 @@ let args = minimist(process.argv, {});
 new BitbucketImporter(args.sHost, args.sCreds, args.cOwner, args.cCreds)
   .run()
   .then(() => {
-    console.log('DONE!');
+    log('DONE!');
   }, (e) => {
-    console.log('FAILED!', e);
+    log('FAILED!', e);
   })
