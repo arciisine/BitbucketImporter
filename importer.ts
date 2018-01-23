@@ -5,6 +5,8 @@ import * as os from 'os';
 import * as rimraf from 'rimraf';
 import * as util from 'util';
 
+import { Queue } from './queue';
+
 const TEMP = os.tmpdir();
 const PAGE_SIZE = 3
 const PAGE_WAIT = 2000
@@ -13,16 +15,28 @@ const HEADERS = {
   'Accepts': 'application/json'
 }
 
+interface Project {
+  id: string;
+  key: string;
+  name: string;
+  description?: string;
+  public: boolean;
+}
+
+interface Repository {
+  id: string;
+  key: string;
+  name: string;
+  slug: string;
+  public: boolean;
+}
+
 function log(msg: string, ...args: any[]) {
   console.log(`${new Date().toISOString()} - ${msg}`, ...args);
 }
 
 function isPrivate(v: any) {
   return `${v}`.toLowerCase() !== 'true'
-}
-
-function sleep(num: number) {
-  return new Promise(resolve => setTimeout(resolve, num));
 }
 
 function exec(command: string, opts: childProcess.ExecOptions = {}) {
@@ -79,136 +93,114 @@ class BitbucketImporter {
     });
   }
 
-  async processRequest(action: string, req: requestPromise.RequestPromise) {
-    try {
-      let response = await req;
-      if (response.type !== 'error') {
-        log(`${action} ... done`);
-        return response;
-      } else {
-        throw new Error('Failed');
+  async importRepositories(key: string) {
+    return new Queue<Repository, any>(PAGE_SIZE, {
+      nextItems: async () => {
+        let repos = await this.serverRequest(`projects/${key}/repos?pageSize=150`);
+        return repos.values as Repository[];
+      },
+      startItem: async (r: Repository) => {
+        log(`Importing ${key} repository ${r.slug} start`);
+        const slug = `${key}_${r.key}`.toLowerCase().replace(/-/g, '_');
+        let qualName = `${key}-${r.name}`
+
+        let req = await this.cloudRequest(`repositories/${this.cloudOwner}/${slug}`, {
+          method: 'POST',
+          json: {
+            scm: 'git',
+            name: qualName,
+            key: r.key,
+            description: r.name,
+            is_private: isPrivate(r.public),
+            fork_policy: 'no_public_forks',
+            has_issues: true,
+            has_wiki: true,
+            project: {
+              key
+            }
+          }
+        });
+        await this.upload(key, r.slug, slug);
+        return;
+      },
+      completeItem: (res: any, r: Repository) => {
+        log(`Importing ${key} repository ${r.slug} complete`);
+      },
+      failItem: (err: any, r: Repository) => {
+        log(`Importing ${key} repository ${r.slug} failed ... ${err.message}`);
       }
-    } catch (e) {
-      log(`${action} ... failed - ${e.message}`);
-      throw e;
-    }
+    }).run();
   }
 
-  async importRepository(pkey: string, id: string, name: string, key: string, priv: boolean) {
-    let qualName = `${pkey}-${name}`
-
-    const slug = `${pkey}_${key}`.toLowerCase().replace(/-/g, '_');
-
-    let req = this.cloudRequest(`repositories/${this.cloudOwner}/${slug}`, {
-      method: 'POST',
-      json: {
-        scm: 'git',
-        name: qualName,
-        key: key,
-        description: name,
-        is_private: priv,
-        fork_policy: 'no_public_forks',
-        has_issues: true,
-        has_wiki: true,
-        project: {
-          key: pkey
-        }
+  importProjects(start: number = 0) {
+    return new Queue<Project, any>(PAGE_SIZE, {
+      nextItems: async () => {
+        return (await this.serverRequest(`projects?pageSize=150`)).values as Project[];
+      },
+      startItem: async (p: Project) => {
+        log(`Importing ${p.key} start`);
+        await this.cloudRequest(`teams/${this.cloudOwner}/projects/`, {
+          method: 'POST',
+          json: {
+            name: p.name,
+            key: p.key,
+            description: p.name,
+            is_private: isPrivate(p.public)
+          }
+        });
+        await this.importRepositories(p.key);
+        return;
+      },
+      completeItem: (res: any, item: Project) => {
+        log(`Importing ${item.key} complete`);
+      },
+      failItem: (err: any, item: Project) => {
+        log(`Importing ${item.key} failed ... ${err.message}`);
       }
-    });
-
-    let res = await this.processRequest(`Creating Project ${pkey} repository ${slug}`, req);
-
-    await this.upload(pkey, key, slug);
+    }).run();
   }
-
-  async importRepositories(key: string, start: number = 0) {
-    let repos = await this.serverRequest(`projects/${key}/repos?pageSize=${PAGE_SIZE}&start=${start}`);
-
-    let all = [];
-
-    for (let repo of repos.values) {
-      let prom = this.importRepository(key, repo.id, repo.name, repo.slug, isPrivate(repo.public));
-      all.push(prom);
-    }
-
-    await Promise.all(all);
-
-    if (!!repos.nextPageStart) {
-      await this.importRepositories(key, repos.nextPageStart);
-    }
-  }
-
-  async importProject(id: string, key: string, name: string, priv: boolean) {
-
-    let cReq = this.cloudRequest(`teams/${this.cloudOwner}/projects/`, {
-      method: 'POST',
-      json: {
-        name,
-        key,
-        description: name,
-        is_private: priv
+  deleteRepositories() {
+    return new Queue<string>(PAGE_SIZE, {
+      nextItems: async () => {
+        let repos = await this.cloudRequest(`repositories/${this.cloudOwner}`)
+        return repos.values.map((r: any) => r.slug) as string[];
+      },
+      startItem: async (slug: string) => {
+        log(`Removing Repository ${slug} start`);
+        let req = this.cloudRequest(`repositories/${this.cloudOwner}/${slug}`, {
+          method: 'DELETE'
+        });
+        return req;
+      },
+      completeItem: (res: any, slug: string) => {
+        log(`Removing Repository ${slug} complete`);
+      },
+      failItem: (err: any, slug: string) => {
+        log(`Removing Repository ${slug} failed ... ${err.message}`);
       }
-    });
-
-    let created = await this.processRequest(`Creating Project ${key}`, cReq);
-
-    await this.importRepositories(key);
+    }).run();
   }
 
-  async importProjects(start: number = 0) {
-    let projects = await this.serverRequest(`projects?pageSize=${PAGE_SIZE}&start=${start}`);
-
-    let all = [];
-
-    for (let project of projects.values) {
-      let imp = this.importProject(project.id, project.key, project.name, isPrivate(project.public));
-      all.push(imp);
-    }
-
-    await Promise.all(all);
-
-    if (!!projects.nextPageStart) {
-      await this.importProjects(projects.nextPageStart)
-    }
-  }
-
-  async deleteRepository(slug: string) {
-    let req = this.cloudRequest(`repositories/${this.cloudOwner}/${slug}`, {
-      method: 'DELETE'
-    });
-
-    await this.processRequest(`Removing Repository ${slug}`, req);
-  }
-
-  async deleteRepositories() {
-    let repos = await this.cloudRequest(`repositories/${this.cloudOwner}?pagelen=${PAGE_SIZE}`)
-    let all = repos.values.map((repo: any) => this.deleteRepository(repo.slug));
-    await Promise.all(all);
-
-    if (!!repos.next) {
-      await sleep(PAGE_WAIT);
-      await this.deleteRepositories();
-    }
-  }
-
-  async deleteProject(key: string) {
-    let req = this.cloudRequest(`teams/${this.cloudOwner}/projects/${key}`, {
-      method: 'DELETE'
-    });
-
-    let response = await this.processRequest(`Removing Project ${key}`, req);
-  }
-
-  async deleteProjects() {
-    let projects = await this.cloudRequest(`teams/${this.cloudOwner}/projects/?pagelen=${PAGE_SIZE}`);
-    let all = projects.values.map((project: any) => this.deleteProject(project.key));
-
-    await Promise.all(all);
-
-    if (!!projects.next) {
-      await sleep(PAGE_WAIT);
-      await this.deleteProjects();
-    }
+  deleteProjects() {
+    return new Queue<string>(PAGE_SIZE, {
+      nextItems: async () => {
+        let projects = await this.cloudRequest(`teams/${this.cloudOwner}/proejcts/`)
+        return projects.values.map((p: any) => p.key) as string[];
+      },
+      startItem: async (key: string) => {
+        log(`Removing Project ${key} start`);
+        let req = this.cloudRequest(`teams/${this.cloudOwner}/projects/${key}`, {
+          method: 'DELETE'
+        });
+        return req;
+      },
+      completeItem: (res: any, key: string) => {
+        log(`Removing Project ${key} complete`);
+      },
+      failItem: (err: any, key: string) => {
+        console.log(`Removing Project ${key} failed ... ${err.message}`);
+      }
+    }).run();
   }
 
   async run() {
