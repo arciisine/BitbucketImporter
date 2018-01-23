@@ -1,0 +1,22 @@
+{
+  "name": "git-migrate",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@types/minimist": "^1.2.0",
+    "@types/node": "^9.3.0",
+    "@types/request-promise": "^4.1.40",
+    "@types/rimraf": "^2.0.2",
+    "minimist": "^1.2.0",
+    "request": "^2.83.0",
+    "request-promise": "^4.2.2",
+    "rimraf": "^2.6.2",
+    "typescript": "^2.6.2"
+  }
+}
