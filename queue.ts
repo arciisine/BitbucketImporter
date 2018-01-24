@@ -71,12 +71,11 @@ export class Queue<T, U=T> {
 
       while (active < this.size && this._queue.length) {
         this.scheduleItem();
-        active += 1;
+        active++;
       }
 
       try {
         let [id, res, item] = await Promise.race(Object.values(this._working));
-        delete this._working[id];
 
         this.log('completed', item);
 
@@ -89,7 +88,6 @@ export class Queue<T, U=T> {
         }
 
         let [id, e, item] = err;
-        delete this._working[id];
 
         if (this.provider.failItem) {
           this.provider.failItem(e, item);
@@ -115,7 +113,15 @@ export class Queue<T, U=T> {
     this.log('started', item);
 
     this._working[nextId] = this.provider.startItem(item)
+      .then(x => {
+        delete this._working[nextId];
+        return x;
+      }, err => {
+        delete this._working[nextId];
+        throw err;
+      })
       .then(x => [nextId, x, item] as [string, U, T])
       .catch(e => { throw [nextId, e || { message: 'Unknown error' }, item] });
+
   }
 }
