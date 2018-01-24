@@ -11,21 +11,12 @@ export function log(msg: string, ...args: any[]) {
 }
 
 export async function exec(command: string, opts: childProcess.ExecOptions = {}) {
-  let child = childProcess.exec(command, opts);
-  let res = await new Promise((resolve, reject) => {
-    let stderr = '';
-    let stdout = '';
-    child.on('stdout', txt => stdout += txt);
-    child.on('stderr', txt => stderr += txt);
-
-    child.addListener("error", reject);
-    child.addListener('exit', (code, signal) => {
-      if (code === 0) {
-        resolve();
-      } else {
-        reject({ message: stderr || stdout });
+  return new Promise((resolve, reject) => {
+    childProcess.exec(command, opts, (err, stdout, stderr) => {
+      if (err) {
+        return reject(err);
       }
+      resolve({ stdout, stderr });
     });
   });
-  return res;
 }

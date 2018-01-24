@@ -8,7 +8,7 @@ export interface Provider<T, U> {
   failItem?: (err: any, t: T) => void;
 }
 
-const PROCESS_DELAY = 2000;
+const PROCESS_DELAY = 1000;
 
 export class Queue<T, U=T> {
 

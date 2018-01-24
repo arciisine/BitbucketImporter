@@ -5,10 +5,14 @@ import { Project, Repository } from './types';
 import { Queue } from './queue';
 import { exec, log, rmdir } from './util';
 
-const TEMP = os.tmpdir();
+import { mkdirSync } from 'fs';
+
+const TEMP = `${os.tmpdir()}/import`;
 const CONCURRENCY = 3
 const PAGE_SIZE = 100;
-const PAGE_WAIT = 2000
+
+mkdirSync(TEMP);
+
 const HEADERS = {
   'Content-Type': 'application/json',
   'Accepts': 'application/json'
@@ -17,6 +21,7 @@ const HEADERS = {
 function isPrivate(v: any) {
   return `${v}`.toLowerCase() !== 'true'
 }
+
 
 export class BitbucketImporter {
   constructor(
