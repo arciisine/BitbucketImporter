@@ -1,5 +1,4 @@
 import * as requestPromise from 'request-promise';
-import * as minimist from 'minimist';
 import * as os from 'os';
 
 import { Project, Repository } from './types';
@@ -7,7 +6,8 @@ import { Queue } from './queue';
 import { exec, log, rmdir } from './util';
 
 const TEMP = os.tmpdir();
-const PAGE_SIZE = 3
+const CONCURRENCY = 3
+const PAGE_SIZE = 15;
 const PAGE_WAIT = 2000
 const HEADERS = {
   'Content-Type': 'application/json',
@@ -40,30 +40,29 @@ export class BitbucketImporter {
     }
   }
 
-  cloudRequest(path: string, opts: requestPromise.RequestPromiseOptions = { json: true }) {
-    let [user, password] = this.cloudCredentials.split(':');
-    return requestPromise(`${this.cloudUrl}/${path}`, {
+  request<U>(url: string, cred: string, opts?: requestPromise.RequestPromiseOptions) {
+    let [user, password] = cred.split(':');
+    opts = opts || { json: true };
+    return requestPromise(url, {
       auth: { user, password },
       headers: HEADERS,
       ...opts
-    });
+    }) as any as Promise<{ values: U[] }>;
   }
 
-  serverRequest(path: string, opts: requestPromise.RequestPromiseOptions = { json: true }) {
-    let [user, password] = this.serverCredentials.split(':');
-    return requestPromise(`${this.serverUrl}/${path}`, {
-      auth: { user, password },
-      headers: HEADERS,
-      ...opts
-    });
+  cloudRequest<T>(path: string, opts?: requestPromise.RequestPromiseOptions) {
+    return this.request<T>(`${this.cloudUrl}/${path}`, this.cloudCredentials, opts);
+  }
+
+  serverRequest<T>(path: string, opts?: requestPromise.RequestPromiseOptions) {
+    return this.request<T>(`${this.serverUrl}/${path}`, this.serverCredentials, opts);
   }
 
   async importRepositories(key: string) {
-    return new Queue<Repository, any>(PAGE_SIZE, {
+    return Queue.run(CONCURRENCY, {
       namespace: (r?: Repository) => r ? `[Importing] Project ${key}: Repository ${r.slug}` : `[Importing] Project ${key}`,
-      gatherItems: async () => {
-        let repos = await this.serverRequest(`projects/${key}/repos?pageSize=150`);
-        return repos.values as Repository[];
+      fetchItems: async (page: number) => {
+        return (await this.serverRequest<Repository>(`projects/${key}/repos?pageSize=${PAGE_SIZE}&start=${(page - 1) * PAGE_SIZE}`)).values
       },
       startItem: async (r: Repository) => {
         const slug = `${key}_${r.key}`.toLowerCase().replace(/-/g, '_');
@@ -80,22 +79,20 @@ export class BitbucketImporter {
             fork_policy: 'no_public_forks',
             has_issues: true,
             has_wiki: true,
-            project: {
-              key
-            }
+            project: { key }
           }
         });
         await this.upload(key, r.slug, slug);
         return;
       }
-    }).run();
+    });
   }
 
   importProjects(start: number = 0) {
-    return new Queue<Project, any>(PAGE_SIZE, {
+    return Queue.run(CONCURRENCY, {
       namespace: (p?: Project) => p ? `[Importing] Project ${p.key}` : `[Importing] Projects`,
-      gatherItems: async () => {
-        return (await this.serverRequest(`projects?pageSize=150`)).values as Project[];
+      fetchItems: async (page: number) => {
+        return (await this.serverRequest<Project>(`projects?pageSize=${PAGE_SIZE}&start=${(page - 1) * PAGE_SIZE}`)).values;
       },
       startItem: async (p: Project) => {
         await this.cloudRequest(`teams/${this.cloudOwner}/projects/`, {
@@ -110,38 +107,31 @@ export class BitbucketImporter {
         await this.importRepositories(p.key);
         return;
       }
-    }).run();
+    });
   }
+
   deleteRepositories() {
-    return new Queue<string>(PAGE_SIZE, {
-      namespace: (key?: string) => key ? `[Removing] Repository ${key}` : `[Removing] Repositories`,
-      gatherItems: async () => {
-        let repos = await this.cloudRequest(`repositories/${this.cloudOwner}`)
-        return repos.values.map((r: any) => r.slug) as string[];
+    Queue.run(CONCURRENCY, {
+      namespace: (r?: Repository) => r ? `[Removing] Repository ${r.slug}` : `[Removing] Repositories`,
+      fetchItems: async (page: number) => {
+        return (await this.cloudRequest<Repository>(`repositories/${this.cloudOwner}?pagelen=${PAGE_SIZE}&page=${page}`)).values;
       },
-      startItem: async (slug: string) => {
-        let req = this.cloudRequest(`repositories/${this.cloudOwner}/${slug}`, {
-          method: 'DELETE'
-        });
-        return req;
+      startItem: (r: Repository) => {
+        return this.cloudRequest(`repositories/${this.cloudOwner}/${r.slug}`, { method: 'DELETE' });
       }
-    }).run();
+    })
   }
 
   deleteProjects() {
-    return new Queue<string>(PAGE_SIZE, {
-      namespace: (key?: string) => key ? `[Removing] Project ${key}` : `[Removing] Projects`,
-      gatherItems: async () => {
-        let projects = await this.cloudRequest(`teams/${this.cloudOwner}/proejcts/`)
-        return projects.values.map((p: any) => p.key) as string[];
+    return Queue.run(CONCURRENCY, {
+      namespace: (p?: Project) => p ? `[Removing] Project ${p.key}` : `[Removing] Projects`,
+      fetchItems: async (page: number) => {
+        return (await this.cloudRequest<Project>(`teams/${this.cloudOwner}/projects/?pagelen=${PAGE_SIZE}&page=${page}`)).values;
       },
-      startItem: async (key: string) => {
-        let req = this.cloudRequest(`teams/${this.cloudOwner}/projects/${key}`, {
-          method: 'DELETE'
-        });
-        return req;
+      startItem: (p: Project) => {
+        return this.cloudRequest(`teams/${this.cloudOwner}/projects/${p.key}`, { method: 'DELETE' });
       }
-    }).run();
+    });
   }
 
   async run() {
@@ -151,12 +141,3 @@ export class BitbucketImporter {
     await this.importProjects();
   }
 }
-
-let args = minimist(process.argv, {});
-
-new BitbucketImporter(args.sHost, args.sCreds, args.cOwner, args.cCreds)
-  .run()
-  .then(
-  () => log('DONE!'),
-  e => log('FAILED!', e)
-  );

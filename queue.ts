@@ -2,7 +2,7 @@ import { log } from "util";
 
 export interface Provider<T, U> {
   namespace(item?: T): string;
-  gatherItems(): Promise<T[]>;
+  fetchItems(page: number): Promise<T[]>;
   startItem(t: T): Promise<U>;
   completeItem?(res: U, item: T): void;
   failItem?: (err: any, t: T) => void;
@@ -13,6 +13,11 @@ function sleep(num: number) {
 }
 
 export class Queue<T, U=T> {
+
+  static run<T, U>(size: number, provider: Provider<T, U>) {
+    return new Queue(size, provider).run();
+  }
+
   private _queue: T[];
   private _workingSize = 0;
   private _working: { [key: string]: Promise<[number, U, T]> } = {};
@@ -23,8 +28,6 @@ export class Queue<T, U=T> {
 
   async run() {
     try {
-      log(this.provider.namespace() + ' gathering items');
-      this._queue = await this.provider.gatherItems();
       await this._run();
     } catch (e) {
       if (e.messge !== 'Empty') {
@@ -33,7 +36,33 @@ export class Queue<T, U=T> {
     }
   }
 
+  async gatherItems() {
+    log(this.provider.namespace() + ' gathering items');
+    let done = false;
+    let items: T[] = [];
+    let page = 1;
+    while (!done) {
+      try {
+        let fetched = await this.provider.fetchItems(page);
+        if (fetched.length) {
+          items = items.concat(fetched);
+        }
+
+        page++;
+      } catch (e) {
+        if (items.length > 0) {
+          done = true;
+        } else {
+          throw e;
+        }
+      }
+    }
+    return items;
+  }
+
   async _run() {
+    this._queue = await this.gatherItems();
+
     while (true) {
       if (this._workingSize < this.size) {
         this.scheduleNext();
