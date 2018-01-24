@@ -22,7 +22,6 @@ function isPrivate(v: any) {
   return `${v}`.toLowerCase() !== 'true'
 }
 
-
 export class BitbucketImporter {
   constructor(
     public serverHost: string,

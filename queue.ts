@@ -23,9 +23,7 @@ export class Queue<T, U=T> {
   }
 
   private _queue: T[];
-  private _workingSize = 0;
-  private _working: { [key: string]: Promise<[number, U, T]> } = {};
-  private _done = false;
+  private _working: { [key: string]: Promise<[string, U, T]> } = {};
   private _id = 0;
 
   constructor(public size: number, public provider: Provider<T, U>) { }
@@ -67,16 +65,18 @@ export class Queue<T, U=T> {
 
     this.scheduleItem();
 
-    while (this._workingSize) {
-      let finished: number;
+    let active = 1;
 
-      while (this._workingSize < this.size && this._queue.length) {
+    while (active) {
+
+      while (active < this.size && this._queue.length) {
         this.scheduleItem();
+        active += 1;
       }
 
       try {
         let [id, res, item] = await Promise.race(Object.values(this._working));
-        finished = id;
+        delete this._working[id];
 
         this.log('completed', item);
 
@@ -89,7 +89,8 @@ export class Queue<T, U=T> {
         }
 
         let [id, e, item] = err;
-        finished = id;
+        delete this._working[id];
+
         if (this.provider.failItem) {
           this.provider.failItem(e, item);
         }
@@ -97,9 +98,9 @@ export class Queue<T, U=T> {
         this.log(`failed ... ${e.message}`, item);
       }
 
-      await sleep(PROCESS_DELAY);
+      active--;
 
-      this.finishItem(finished);
+      await sleep(PROCESS_DELAY);
     }
   }
 
@@ -108,19 +109,13 @@ export class Queue<T, U=T> {
       throw new Error(`Empty`);
     }
 
-    let nextId = this._id++;
+    let nextId = '' + (this._id++);
     let item = this._queue.shift()!;
-    this._workingSize++;
 
     this.log('started', item);
 
     this._working[nextId] = this.provider.startItem(item)
-      .then(x => [nextId, x, item] as [number, U, T])
+      .then(x => [nextId, x, item] as [string, U, T])
       .catch(e => { throw [nextId, e || { message: 'Unknown error' }, item] });
-  }
-
-  finishItem(id: number) {
-    this._workingSize--;
-    delete this._working[id];
   }
 }
