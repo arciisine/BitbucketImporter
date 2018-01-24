@@ -30,8 +30,13 @@ export class Queue<T, U=T> {
 
   constructor(public size: number, public provider: Provider<T, U>) { }
 
+  log(msg: string, item?: T) {
+    log(this.provider.namespace(item) + ' ' + msg);
+  }
+
   async gatherItems() {
-    log(this.provider.namespace() + ' gathering items');
+    this.log('gathering items');
+
     let done = false;
     let items: T[] = [];
     let page = 1;
@@ -60,28 +65,36 @@ export class Queue<T, U=T> {
   async run() {
     this._queue = await this.gatherItems();
 
-    while (true) {
-      while (this._workingSize < this.size) {
+    this.scheduleItem();
+
+    while (this._workingSize) {
+      let finished: number;
+
+      while (this._workingSize < this.size && this._queue.length) {
         this.scheduleItem();
       }
-
-      let finished: number;
 
       try {
         let [id, res, item] = await Promise.race(Object.values(this._working));
         finished = id;
 
-        log(this.provider.namespace(item) + ' complete');
+        this.log('completed', item);
 
         if (this.provider.completeItem) {
           this.provider.completeItem(res, item);
         }
-      } catch ([id, e, item]) {
+      } catch (err) {
+        if (!Array.isArray(err)) {
+          throw err;
+        }
+
+        let [id, e, item] = err;
         finished = id;
         if (this.provider.failItem) {
           this.provider.failItem(e, item);
         }
-        log(this.provider.namespace(item) + ` failed ... ${e.message}`);
+
+        this.log(`failed ... ${e.message}`, item);
       }
 
       await sleep(PROCESS_DELAY);
@@ -99,11 +112,11 @@ export class Queue<T, U=T> {
     let item = this._queue.shift()!;
     this._workingSize++;
 
-    log(this.provider.namespace(item) + ' started');
+    this.log('started', item);
 
     this._working[nextId] = this.provider.startItem(item)
       .then(x => [nextId, x, item] as [number, U, T])
-      .catch(e => { throw [nextId, e, item] });
+      .catch(e => { throw [nextId, e || { message: 'Unknown error' }, item] });
   }
 
   finishItem(id: number) {

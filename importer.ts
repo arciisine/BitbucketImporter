@@ -84,7 +84,6 @@ export class BitbucketImporter {
           }
         });
         await this.upload(key, r.slug, slug);
-        return;
       }
     });
   }
@@ -107,7 +106,6 @@ export class BitbucketImporter {
           }
         });
         await this.importRepositories(p.key);
-        return;
       }
     });
   }

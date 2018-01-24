@@ -10,16 +10,22 @@ export function log(msg: string, ...args: any[]) {
   console.log(`${new Date().toISOString()} - ${msg}`, ...args);
 }
 
-export function exec(command: string, opts: childProcess.ExecOptions = {}) {
+export async function exec(command: string, opts: childProcess.ExecOptions = {}) {
   let child = childProcess.exec(command, opts);
-  return new Promise((resolve, reject) => {
+  let res = await new Promise((resolve, reject) => {
+    let stderr = '';
+    let stdout = '';
+    child.on('stdout', txt => stdout += txt);
+    child.on('stderr', txt => stderr += txt);
+
     child.addListener("error", reject);
     child.addListener('exit', (code, signal) => {
       if (code === 0) {
         resolve();
       } else {
-        reject();
+        reject({ message: stderr || stdout });
       }
     });
   });
+  return res;
 }
