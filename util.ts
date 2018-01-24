@@ -4,6 +4,8 @@ import * as util from 'util';
 
 export let rmdir = util.promisify(rimraf);
 
+export let sleep = (x: number) => new Promise(resolve => setTimeout(resolve, x));
+
 export function log(msg: string, ...args: any[]) {
   console.log(`${new Date().toISOString()} - ${msg}`, ...args);
 }

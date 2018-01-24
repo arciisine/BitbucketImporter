@@ -1,4 +1,4 @@
-import { log } from "./util";
+import { log, sleep } from './util';
 
 export interface Provider<T, U> {
   namespace(item?: T): string;
@@ -8,9 +8,7 @@ export interface Provider<T, U> {
   failItem?: (err: any, t: T) => void;
 }
 
-function sleep(num: number) {
-  return new Promise(resolve => setTimeout(resolve, num));
-}
+const PROCESS_DELAY = 2000;
 
 export class Queue<T, U=T> {
 
@@ -42,6 +40,7 @@ export class Queue<T, U=T> {
         let fetched = await this.provider.fetchItems(page);
         if (fetched.length) {
           items = items.concat(fetched);
+          await sleep(PROCESS_DELAY);
         } else {
           done = true;
         }
@@ -84,6 +83,8 @@ export class Queue<T, U=T> {
         }
         log(this.provider.namespace(item) + ` failed ... ${e.message}`);
       }
+
+      await sleep(PROCESS_DELAY);
 
       this.finishItem(finished);
     }

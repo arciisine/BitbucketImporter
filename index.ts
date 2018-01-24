@@ -7,7 +7,10 @@ async function run() {
   let args = minimist(process.argv, {});
   try {
     let importer = new BitbucketImporter(args.sHost, args.sCreds, args.cOwner, args.cCreds);
-    await importer.run();
+    log('Starting');
+    await importer.deleteRepositories();
+    await importer.deleteProjects();
+    await importer.importProjects();
     log('Done');
   } catch (e) {
     log('Failed', e);
