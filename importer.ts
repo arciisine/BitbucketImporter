@@ -42,6 +42,7 @@ export class BitbucketImporter {
 
   request<U>(url: string, cred: string, opts?: requestPromise.RequestPromiseOptions) {
     let [user, password] = cred.split(':');
+    log(`[Request] [${(opts && opts.method) || 'GET'}] ${url}`);
     opts = opts || { json: true };
     return requestPromise(url, {
       auth: { user, password },
@@ -111,7 +112,7 @@ export class BitbucketImporter {
   }
 
   deleteRepositories() {
-    Queue.run(CONCURRENCY, {
+    return Queue.run(CONCURRENCY, {
       namespace: (r?: Repository) => r ? `[Removing] Repository ${r.slug}` : `[Removing] Repositories`,
       fetchItems: async (page: number) => {
         return (await this.cloudRequest<Repository>(`repositories/${this.cloudOwner}?pagelen=${PAGE_SIZE}&page=${page}`)).values;
@@ -137,7 +138,7 @@ export class BitbucketImporter {
   async run() {
     log('Starting');
     await this.deleteRepositories();
-    await this.deleteProjects();
-    await this.importProjects();
+    //await this.deleteProjects();
+    //await this.importProjects();
   }
 }

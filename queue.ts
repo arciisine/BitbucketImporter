@@ -1,4 +1,4 @@
-import { log } from "util";
+import { log } from "./util";
 
 export interface Provider<T, U> {
   namespace(item?: T): string;
@@ -14,8 +14,14 @@ function sleep(num: number) {
 
 export class Queue<T, U=T> {
 
-  static run<T, U>(size: number, provider: Provider<T, U>) {
-    return new Queue(size, provider).run();
+  static async run<T, U>(size: number, provider: Provider<T, U>) {
+    try {
+      await new Queue(size, provider).run();
+    } catch (e) {
+      if (e.message !== 'Empty') {
+        throw e;
+      }
+    }
   }
 
   private _queue: T[];
@@ -25,16 +31,6 @@ export class Queue<T, U=T> {
   private _id = 0;
 
   constructor(public size: number, public provider: Provider<T, U>) { }
-
-  async run() {
-    try {
-      await this._run();
-    } catch (e) {
-      if (e.messge !== 'Empty') {
-        throw e;
-      }
-    }
-  }
 
   async gatherItems() {
     log(this.provider.namespace() + ' gathering items');
@@ -46,6 +42,8 @@ export class Queue<T, U=T> {
         let fetched = await this.provider.fetchItems(page);
         if (fetched.length) {
           items = items.concat(fetched);
+        } else {
+          done = true;
         }
 
         page++;
@@ -60,16 +58,12 @@ export class Queue<T, U=T> {
     return items;
   }
 
-  async _run() {
+  async run() {
     this._queue = await this.gatherItems();
 
     while (true) {
-      if (this._workingSize < this.size) {
-        this.scheduleNext();
-      }
-
-      if (this._workingSize < this.size) {
-        continue; // Don't wait until queue is full;
+      while (this._workingSize < this.size) {
+        this.scheduleItem();
       }
 
       let finished: number;
@@ -91,26 +85,28 @@ export class Queue<T, U=T> {
         log(this.provider.namespace(item) + ` failed ... ${e.message}`);
       }
 
-      if (finished) {
-        this._workingSize--;
-        delete this._working[finished];
-      }
+      this.finishItem(finished);
     }
   }
 
-  async scheduleNext() {
+  scheduleItem() {
     if (this._queue.length === 0) {
       throw new Error(`Empty`);
     }
 
     let nextId = this._id++;
     let item = this._queue.shift()!;
+    this._workingSize++;
 
     log(this.provider.namespace(item) + ' started');
 
     this._working[nextId] = this.provider.startItem(item)
       .then(x => [nextId, x, item] as [number, U, T])
       .catch(e => { throw [nextId, e, item] });
-    this._workingSize++;
+  }
+
+  finishItem(id: number) {
+    this._workingSize--;
+    delete this._working[id];
   }
 }
