@@ -2,7 +2,6 @@ import * as minimist from 'minimist';
 import { BitbucketImporter } from './importer';
 import { log } from './util';
 
-
 async function run() {
   process.on('unhandledRejection', error => {
     log('unhandledRejection', error);
