@@ -11,15 +11,15 @@ export interface Provider<T, U> {
 
 export class Queue<T, U> {
 
-  static run<T, U = any>(size: number, delay: number, provider: Provider<T, U>) {
-    return new Queue(size, delay, provider).run();
+  static run<T, U = any>(provider: Provider<T, U>, size: number = 10, delay: number = 0) {
+    return new Queue(provider, size, delay).run();
   }
 
   private _queue: T[];
   private _working: { [key: string]: Promise<[string, U, T]> } = {};
   private _id = 0;
 
-  constructor(public size: number, public delay: number, public provider: Provider<T, U>) { }
+  constructor(public provider: Provider<T, U>, public size: number = 10, public delay: number = 0) { }
 
   log(msg: string, item?: T) {
     log(this.provider.namespace(item) + ' ' + msg);

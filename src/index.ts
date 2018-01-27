@@ -18,7 +18,7 @@ async function run() {
     //await importer.deleteCloudRepositories();
     //await importer.deleteCloudProjects();
     //await importer.importServerProjects();
-    await importer.generateRepoMapping();
+    console.log(await importer.generateUserMigrationScript());
     log('Done');
   } catch (e) {
     log('Failed', e);

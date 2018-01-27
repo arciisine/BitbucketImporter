@@ -2,6 +2,7 @@ import * as childProcess from 'child_process';
 import * as rimraf from 'rimraf';
 import * as util from 'util';
 import * as requestPromise from 'request-promise';
+import * as fs from 'fs';
 
 export type Requestor<T> = (path: string, opts?: requestPromise.RequestPromiseOptions) => Promise<T>
 
@@ -64,4 +65,21 @@ export function request<U>(baseOpts: requestPromise.RequestPromiseOptions, path:
   log(`${baseOpts.baseUrl}${path}`, opts)
 
   return (requestPromise(path, opts) as any as Promise<U>);
+}
+
+export function CacheFile(f: string): MethodDecorator {
+  return function (target: any, property: any, descriptor: any) {
+    let og = descriptor.value;
+    descriptor.value = function (...args: any[]): Promise<any> {
+      if (!fs.existsSync(f)) {
+        return og.apply(this, args).then((res: any) => {
+          fs.writeFileSync(f, JSON.stringify(res));
+          return res;
+        })
+      } else {
+        let content = JSON.parse(fs.readFileSync(f).toString())
+        return Promise.resolve(content);
+      }
+    }
+  }
 }

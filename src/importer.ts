@@ -3,15 +3,15 @@ import * as requestPromise from 'request-promise';
 
 import { Project, Repository, Group, User, Named, PermissionGroup, PermissionUser } from './types';
 import { Queue, Provider } from './queue';
-import { exec, log, rmdir, request, requestor, Requestor } from './util';
+import { exec, log, rmdir, request, requestor, Requestor, CacheFile } from './util';
 
-import { mkdirSync } from 'fs';
+import * as fs from 'fs';
 import { QueueSource } from './queue-source';
 
 const TEMP = `${os.tmpdir()}/import`;
 
 try {
-  mkdirSync(TEMP);
+  fs.mkdirSync(TEMP);
 } catch (e) {
   //Do nothing
 }
@@ -50,8 +50,8 @@ export class BitbucketImporter {
     this.cloudSource = (p, c) => this.getSource(this.cloudRequest, p, 100,
       (page, size) => ({ pagelen: size, page }), c);
 
-    this.cloudRun = p => Queue.run(3, 2000, p);
-    this.serverRun = p => Queue.run(20, 0, p);
+    this.cloudRun = p => Queue.run(p, 3, 2000);
+    this.serverRun = p => Queue.run(p, 20);
   }
 
   getSource<T>(req: Requestor<{ values: T[] }>, path: string, pageSize: number, ph: PageHandler, cache: boolean = true): QueueSource<T> {
@@ -218,6 +218,7 @@ export class BitbucketImporter {
     });
   }
 
+  @CacheFile(`${TEMP}/mapping.json`)
   async generateRepoMapping() {
     const out: [string, string][] = [];
     await this.serverRun<Project>({
@@ -231,7 +232,6 @@ export class BitbucketImporter {
           namespace: (r?) => r ? `[Mapping] Project ${key}: Repository ${r.slug}` : `[Mapping] Project ${key} Repositories`,
           source: this.serverSource(`/projects/${key}/repos`),
           processItem: async r => {
-            console.log(r);
             const slug = this.genCloudSlug(key, r);
             out.push(
               [`${this.serverHost}/scm/${key}/${r.slug}.git`, `bitbucket.org/${this.cloudOwner}/${slug}.git`], //http,
@@ -241,8 +241,84 @@ export class BitbucketImporter {
         });
       }
     });
-    log(
-      out.sort((a, b) => (b[0].length + b[1].length) - (a[0].length + a[1].length))
-        .map(x => x.join('\t')).join('\n'));
+
+    //Output by length
+    let final = out.sort((a, b) => (b[0].length + b[1].length) - (a[0].length + a[1].length));
+
+    return final;
+  }
+
+  async generateUserMigrationScript() {
+    let mapping = await this.generateRepoMapping();
+
+    const sedExpressions = mapping.map(r => `-e 's|${r[0]}|${r[1]}|' \\`)
+
+    return `#!/bin/bash
+CLOUD_USERNAME=$1
+CLOUD_PASSWORD=$2
+SERVER_USERNAME=$3
+SERVER_PASSWORD=$4
+
+function serverReq() {
+  curl -s -H 'Accepts: application/json' -H 'X-Atlassian-Token:no-check' \\
+    -u "\${SERVER_USERNAME}:\${SERVER_PASSWORD}" 'https://git.eaiti.com'\${@}
+}
+
+function cloudReq() {
+  curl -s -H 'Accepts: application/json' \\
+    -u "\${CLOUD_USERNAME}:\${CLOUD_PASSWORD}" 'https://api.bitbucket.org'\${@}
+}
+
+if [[ -n "DRYRUN" ]]; then
+  DRYRUN="echo " 
+  set -x
+else
+  set -e  
+fi
+
+if [[ -z "$CLOUD_USERNAME" ]]; then
+  read -p "Bitbucket.org Username: " CLOUD_USERNAME
+fi
+
+if [[ -z "$CLOUD_PASSWORD" ]]; then
+  read -s -p "Bitbucket.org Password: " CLOUD_PASSWORD
+  echo
+fi
+
+if [[ -z "$SERVER_USERNAME" ]]; then
+  read -p "git.eaiti.com Username: " SERVER_USERNAME
+fi
+
+if [[ -z "$SERVER_PASSWORD" ]]; then
+  read -s -p "git.eaiti.com Password: " SERVER_PASSWORD
+  echo
+fi
+
+serverReq '/rest/api/1.0/users/'\$SERVER_USERNAME -f
+cloudReq '/2.0/user' -f
+
+#Update all repos from current location
+for REPO in $(find . -name '.git' -type d); do
+    $DRYRUN sed -i.bak \\
+      ${sedExpressions.map(x => `      ${x}`).join('\n')}
+      $REPO/.config
+done
+
+#Migrate SSH Keys
+OLDIFS="$IFS"
+IFS='
+'
+for ROW in \`serverReq '/rest/ssh/1.0/keys'| jq '.values[] | .label+"\\t"+.text' -r\`; 
+do
+    LABEL=$(echo $ROW | awk -F '\\t' '{ print $1 }')
+    LABEL=\${LABEL:-default}
+    KEY=\$(echo $ROW | awk -F '\\t' '{ print $2 }')
+    $DRYRUN $LABEL $KEY
+done
+
+#Migrate Personal Repos
+
+IFS="$OLDIFS"
+`;
   }
 }
