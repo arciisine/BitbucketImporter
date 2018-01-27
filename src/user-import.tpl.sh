@@ -14,11 +14,15 @@ function serverReq() {
 
 function cloudReq() {
   curl -s -H 'Accepts: application/json' \
-    -u "${CLOUD_USERNAME}:${CLOUD_PASSWORD}" "https://$CLOUD_HOST"'${@}
+    -u "${CLOUD_USERNAME}:${CLOUD_PASSWORD}" "https://$CLOUD_HOST"${@}
+}
+
+function log() {
+  echo ${@}
 }
 
 if [[ -n "DRYRUN" ]]; then
-  DRYRUN="echo " 
+  DRYRUN="log" 
   set -x
 else
   set -e  
@@ -47,7 +51,7 @@ cloudReq '/2.0/user' -f
 
 #Update all repos from current location
 for REPO in $(find . -name '.git' -type d); do
-    $DRYRUN sed -i.bak \
+    $DRYRUN sed -i.bak -r \
       %%SED_EXPRESSIONS%%
       $REPO/.config
 done

@@ -38,9 +38,9 @@ export class BitbucketImporter {
     public serverCredentials: string,
     public cloudOwner: string,
     public cloudCredentials: string,
-    public cloudHost: string = 'api.bitbucket.org'
+    public cloudHost: string = 'bitbucket.org'
   ) {
-    this.cloudRequest = requestor(`https://${cloudHost}/2.0`, cloudCredentials);
+    this.cloudRequest = requestor(`https://api.${cloudHost}/2.0`, cloudCredentials);
     this.serverRequest = requestor(`https://${serverHost}/rest/api/1.0`, serverCredentials, {
       headers: { 'X-Atlassian-Token': 'no-check' }
     });
@@ -221,7 +221,7 @@ export class BitbucketImporter {
 
   @CacheFile(`${TEMP}/mapping.json`)
   async generateRepoMapping() {
-    const out: [string, string][] = [];
+    const out: { http: [string, string][], ssh: [string, string][] } = { http: [], ssh: [] };
     await this.serverRun<Project>({
       namespace: (p?) => p ? `[Mapping] Project ${p.key}` : `[Mapping] Projects`,
       source: this.serverSource(`/projects`),
@@ -234,25 +234,37 @@ export class BitbucketImporter {
           source: this.serverSource(`/projects/${key}/repos`),
           processItem: async r => {
             const slug = this.genCloudSlug(key, r);
-            out.push(
-              [`${this.serverHost}/scm/${key}/${r.slug}.git`, `bitbucket.org/${this.cloudOwner}/${slug}.git`], //http,
-              [`${this.serverHost}/${key}/${r.slug}.git`, `bitbucket.org:${this.cloudOwner}/${this.cloudOwner}/${slug}.git`], //ssh,
+            out.http.push(
+              [`${this.serverHost}/scm/${key}/${r.slug}.git`,
+              `${this.cloudHost}/${this.cloudOwner}/${slug}.git`])  //http
+            out.ssh.push(
+              [`${this.serverHost}/${key}/${r.slug}.git`,
+              `${this.cloudHost}:${this.cloudOwner}/${this.cloudOwner}/${slug}.git`], //ssh,
             )
           }
         });
       }
     });
 
-    //Output by length
-    let final = out.sort((a, b) => (b[0].length + b[1].length) - (a[0].length + a[1].length));
-
-    return final;
+    return out;
   }
 
   async generateUserMigrationScript() {
     let mapping = await this.generateRepoMapping();
 
-    const sedExpressions = mapping.map(r => `-e 's|${r[0]}|${r[1]}|' \\`);
+    let httpConfigs = mapping.http.map(x => [
+      `https://(\'$SERVER_USERNAME\'@)?${x[0]}`,
+      `https://\'$CLOUD_USERNAME\'@${x[1]}`
+    ]);
+
+    let sshConfigs = mapping.ssh.map(x => [
+      `(ssh://)?git@${x[0]}`,
+      `ssh://git@${x[1]}`
+    ]);
+
+    let configs = (httpConfigs.concat(sshConfigs)).sort((a, b) => (b[0].length - a[0].length));
+
+    const sedExpressions = configs.map(r => `      -e 's|${r[0]}|${r[1]}|' \\`).join('\n');
 
     const tpl = fs.readFileSync(__dirname + '/user-import.tpl.sh').toString();
 
