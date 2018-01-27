@@ -9,9 +9,6 @@ import { mkdirSync } from 'fs';
 import { QueueSource } from './queue-source';
 
 const TEMP = `${os.tmpdir()}/import`;
-const PAGE_SIZE = 100;
-const CONCURRENT = 3
-const CLOUD_DELAY = 2000
 
 try {
   mkdirSync(TEMP);
@@ -23,7 +20,7 @@ function isPrivate(v: any) {
   return `${v}`.toLowerCase() !== 'true'
 }
 
-type PageHandler = (page: number) => { [key: string]: number };
+type PageHandler = (page: number, size: number) => { [key: string]: number };
 type QueueSourceBuilder<T> = (path: string, cache?: boolean) => QueueSource<T>
 
 export class BitbucketImporter {
@@ -44,32 +41,29 @@ export class BitbucketImporter {
   ) {
     this.cloudRequest = requestor(`https://api.bitbucket.org/2.0`, cloudCredentials);
     this.serverRequest = requestor(`https://${serverHost}/rest/api/1.0`, serverCredentials, {
-      headers: {
-        'X-Atlassian-Token': 'no-check',
-        'Accept': 'application/json'
-      }
+      headers: { 'X-Atlassian-Token': 'no-check' }
     });
 
-    this.serverSource = this.getSource.bind(this, this.serverRequest, (p: number) => ({
-      pageSize: PAGE_SIZE,
-      start: (p - 1) * PAGE_SIZE
-    }));
+    this.serverSource = (p, c) => this.getSource(this.serverRequest, p, 100,
+      (page, size) => ({ pageSize: size, start: (page - 1) * size }), c);
 
-    this.cloudSource = this.getSource.bind(this, this.cloudRequest, (p: number) => ({
-      pagelen: PAGE_SIZE,
-      page: p
-    }));
+    this.cloudSource = (p, c) => this.getSource(this.cloudRequest, p, 100,
+      (page, size) => ({ pagelen: size, page }), c);
 
-    this.cloudRun = Queue.run.bind(Queue, CONCURRENT, CLOUD_DELAY);
-    this.serverRun = Queue.run.bind(Queue, CONCURRENT, 0);
+    this.cloudRun = p => Queue.run(3, 2000, p);
+    this.serverRun = p => Queue.run(20, 0, p);
   }
 
-  getSource<T>(req: Requestor<{ values: T[] }>, ph: PageHandler, path: string, cache: boolean = true): QueueSource<T> {
+  getSource<T>(req: Requestor<{ values: T[] }>, path: string, pageSize: number, ph: PageHandler, cache: boolean = true): QueueSource<T> {
     let key = `${req.name}||${path}`;
     let el = this.sourceCache[key];
     if (!cache || !el) {
       let namespace = path.split('/').filter(x => !!x).join(' ');
-      el = new QueueSource((page: number) => req(path, { qs: ph(page) }).then(x => x.values), namespace);
+      el = new QueueSource(
+        (chunk: number, size: number) => req(path, { qs: ph(chunk, size) }).then(x => x.values),
+        namespace,
+        pageSize
+      );
       if (cache) {
         this.sourceCache[key] = el;
       }
@@ -114,15 +108,15 @@ export class BitbucketImporter {
   archiveRepositories(key: string) {
     return this.serverRun<Repository>({
       namespace: (r?) => r ? `[Archiving] Project ${key} Repository ${r.slug}` : `[Archiving] Project ${key} Repositories`,
-      source: this.serverSource(`projects/${key}`),
+      source: this.serverSource(`/projects/${key}/repos`),
       processItem: async r => {
         await this.archiveSubPermissions<PermissionGroup>(
-          `projects/${key}/permissions/groups`,
+          `/projects/${key}/permissions/groups`,
           `Project ${key} Repository ${r.slug} Group`,
           p => p.group.name
         );
         await this.archiveSubPermissions<PermissionUser>(
-          `projects/${key}/permissions/users`,
+          `/projects/${key}/permissions/users`,
           `Project ${key} Repository ${r.slug} User`,
           p => p.user.name
         );
@@ -133,26 +127,26 @@ export class BitbucketImporter {
   archiveServerProjects() {
     return this.serverRun<Project>({
       namespace: (p?) => p ? `[Archiving] Project ${p.key}` : `[Archiving] Projects`,
-      source: this.serverSource('projects'),
+      source: this.serverSource('/projects'),
       processItem: async p => {
         await this.archiveRepositories(p.key);
 
         await this.archiveSubPermissions<PermissionGroup>(
-          `projects/${p.key}/permissions/groups`,
+          `/projects/${p.key}/permissions/groups`,
           `Project ${p.key} Group`,
           p => p.group.name
         );
 
         await this.archiveSubPermissions<PermissionUser>(
-          `projects/${p.key}/permissions/users`,
+          `/projects/${p.key}/permissions/users`,
           `Project ${p.key} User`,
           p => p.user.name
         );
 
-        await this.serverRequest(`projects/${p.key}`, { method: 'PUT', json: { ...p, public: false } });
-        await this.serverRequest(`projects/${p.key}/permissions/PROJECT_ADMIN/all`, { method: 'POST', qs: { allow: false } });
-        await this.serverRequest(`projects/${p.key}/permissions/PROJECT_WRITE/all`, { method: 'POST', qs: { allow: false } });
-        await this.serverRequest(`projects/${p.key}/permissions/PROJECT_READ/all`, { method: 'POST', qs: { allow: true } });
+        await this.serverRequest(`/projects/${p.key}`, { method: 'PUT', json: { ...p, public: false } });
+        await this.serverRequest(`/projects/${p.key}/permissions/PROJECT_ADMIN/all`, { method: 'POST', qs: { allow: false } });
+        await this.serverRequest(`/projects/${p.key}/permissions/PROJECT_WRITE/all`, { method: 'POST', qs: { allow: false } });
+        await this.serverRequest(`/projects/${p.key}/permissions/PROJECT_READ/all`, { method: 'POST', qs: { allow: true } });
       }
     });
   }
@@ -160,13 +154,13 @@ export class BitbucketImporter {
   importRepositories(key: string) {
     return this.serverRun<Repository>({
       namespace: (r?) => r ? `[Importing] Project ${key}: Repository ${r.slug}` : `[Importing] Project ${key} Repositories`,
-      source: this.serverSource(`projects/${key}`),
+      source: this.serverSource(`/projects/${key}/repos`),
       processItem: async r => {
         const slug = this.genCloudSlug(key, r);
 
         let qualName = `${key}-${r.name}`
 
-        await this.cloudRequest(`repositories/${this.cloudOwner}/${slug}`, {
+        await this.cloudRequest(`/repositories/${this.cloudOwner}/${slug}`, {
           method: 'POST',
           json: {
             scm: 'git',
@@ -188,9 +182,9 @@ export class BitbucketImporter {
   importServerProjects(start: number = 0) {
     return this.serverRun<Project>({
       namespace: (p?) => p ? `[Importing] Project ${p.key}` : `[Importing] Projects`,
-      source: this.serverSource(`projects`),
+      source: this.serverSource(`/projects`),
       processItem: async p => {
-        await this.cloudRequest(`teams/${this.cloudOwner}/projects/`, {
+        await this.cloudRequest(`/teams/${this.cloudOwner}/projects/`, {
           method: 'POST',
           json: {
             name: p.name,
@@ -207,9 +201,9 @@ export class BitbucketImporter {
   deleteCloudRepositories() {
     return this.cloudRun<Repository>({
       namespace: (r?) => r ? `[Removing] Repository ${r.slug}` : `[Removing] Repositories`,
-      source: this.cloudSource(`repositories/${this.cloudOwner}`),
+      source: this.cloudSource(`/repositories/${this.cloudOwner}`),
       processItem: r => {
-        return this.cloudRequest(`repositories/${this.cloudOwner}/${r.slug}`, { method: 'DELETE' });
+        return this.cloudRequest(`/repositories/${this.cloudOwner}/${r.slug}`, { method: 'DELETE' });
       }
     })
   }
@@ -217,9 +211,9 @@ export class BitbucketImporter {
   deleteCloudProjects() {
     return this.cloudRun<Project>({
       namespace: (p?) => p ? `[Removing] Project ${p.key}` : `[Removing] Projects`,
-      source: this.cloudSource(`teams/${this.cloudOwner}/projects/`),
+      source: this.cloudSource(`/teams/${this.cloudOwner}/projects/`),
       processItem: p => {
-        return this.cloudRequest(`teams/${this.cloudOwner}/projects/${p.key}`, { method: 'DELETE' });
+        return this.cloudRequest(`/teams/${this.cloudOwner}/projects/${p.key}`, { method: 'DELETE' });
       }
     });
   }
@@ -228,14 +222,14 @@ export class BitbucketImporter {
     const out: [string, string][] = [];
     await this.serverRun<Project>({
       namespace: (p?) => p ? `[Mapping] Project ${p.key}` : `[Mapping] Projects`,
-      source: this.serverSource(`projects`),
+      source: this.serverSource(`/projects`),
       processItem: async p => {
         let key = p.key;
 
         //Read repos
         await this.serverRun<Repository>({
           namespace: (r?) => r ? `[Mapping] Project ${key}: Repository ${r.slug}` : `[Mapping] Project ${key} Repositories`,
-          source: this.serverSource(`projects/${key}`),
+          source: this.serverSource(`/projects/${key}/repos`),
           processItem: async r => {
             const slug = this.genCloudSlug(key, r);
             out.push(
@@ -244,11 +238,10 @@ export class BitbucketImporter {
             )
           }
         });
-
-        console.log(
-          out.sort((a, b) => (b[0].length + b[1].length) - (a[0].length + a[1].length))
-            .map(x => x.join('\t')).join('\n'));
       }
     });
+    console.log(
+      out.sort((a, b) => (b[0].length + b[1].length) - (a[0].length + a[1].length))
+        .map(x => x.join('\t')).join('\n'));
   }
 }

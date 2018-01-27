@@ -1,15 +1,15 @@
 import { log, sleep } from './util';
 
-export type QueueSourceFetcher<T> = (page: number) => Promise<T[]>;
+export type QueueSourceFetcher<T> = (chunk: number, size: number) => Promise<T[]>;
 
 export class QueueSource<T> {
 
   private cache: T[]
 
-  constructor(private fetch: QueueSourceFetcher<T>, private namespace: string) { }
+  constructor(private fetch: QueueSourceFetcher<T>, private namespace: string, private fetchSize: number) { }
 
   log(msg: string) {
-    log(this.namespace ? this.namespace + ' ' + msg : msg);
+    log('[Gathering]' + (this.namespace ? ` ${this.namespace} ` : ' ') + msg);
   }
 
   async gatherItems(delay: number = 0) {
@@ -19,13 +19,13 @@ export class QueueSource<T> {
 
     let done = false;
     let items: T[] = [];
-    let page = 1;
+    let chunk = 1;
 
-    this.log('Gathering items');
+    this.log('Fetching items');
 
     while (!done) {
       try {
-        let fetched = await this.fetch(page);
+        let fetched = await this.fetch(chunk, this.fetchSize);
         if (fetched.length) {
           items = items.concat(fetched);
           await sleep(delay);
@@ -33,7 +33,7 @@ export class QueueSource<T> {
           done = true;
         }
 
-        page++;
+        chunk++;
       } catch (e) {
         if (items.length > 0) {
           done = true;
@@ -42,7 +42,7 @@ export class QueueSource<T> {
         }
       }
     }
-    this.log(`Gathered ${items.length} items`);
+    this.log(`Fetched ${items.length} items`);
     this.cache = items;
     return items;
   }
