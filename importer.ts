@@ -1,9 +1,9 @@
-import * as requestPromise from 'request-promise';
 import * as os from 'os';
+import * as requestPromise from 'request-promise';
 
-import { Project, Repository } from './types';
+import { Project, Repository, Group, User, Named, PermissionGroup, PermissionUser } from './types';
 import { Queue } from './queue';
-import { exec, log, rmdir } from './util';
+import { exec, log, rmdir, request } from './util';
 
 import { mkdirSync } from 'fs';
 
@@ -11,11 +11,10 @@ const TEMP = `${os.tmpdir()}/import`;
 const CONCURRENCY = 3
 const PAGE_SIZE = 100;
 
-mkdirSync(TEMP);
-
-const HEADERS = {
-  'Content-Type': 'application/json',
-  'Accepts': 'application/json'
+try {
+  mkdirSync(TEMP);
+} catch (e) {
+  //Do nothing
 }
 
 function isPrivate(v: any) {
@@ -44,30 +43,116 @@ export class BitbucketImporter {
     }
   }
 
-  request<U>(url: string, cred: string, opts?: requestPromise.RequestPromiseOptions) {
-    let [user, password] = cred.split(':');
-    //log(`[Request] [${(opts && opts.method) || 'GET'}] ${url}`);
-    opts = opts || { json: true };
-    return requestPromise(url, {
-      auth: { user, password },
-      headers: HEADERS,
-      ...opts
-    }) as any as Promise<{ values: U[] }>;
-  }
-
   cloudRequest<T>(path: string, opts?: requestPromise.RequestPromiseOptions) {
-    return this.request<T>(`${this.cloudUrl}/${path}`, this.cloudCredentials, opts);
+    return request<T>(`${this.cloudUrl}/${path}`, this.cloudCredentials, opts);
   }
 
   serverRequest<T>(path: string, opts?: requestPromise.RequestPromiseOptions) {
-    return this.request<T>(`${this.serverUrl}/${path}`, this.serverCredentials, opts);
+    return request<T>(`${this.serverUrl}/${path}`, this.serverCredentials, {
+      ...(opts || {}),
+      headers: {
+        ...((opts || {}).headers || {}),
+        'X-Atlassian-Token': 'no-check'
+      }
+    });
+  }
+
+  archiveSubPermissions<T>(path: string, title: string, getName: (e: T) => string) {
+    return Queue.run(CONCURRENCY, {
+      namespace: (n?: T) => n ? `[Archiving] ${title} ${getName(n)}` : `[Archiving] ${title}s`,
+      fetchItems: (page: number) => {
+        return this.serverRequest<T>(path, {
+          qs: {
+            pageSize: PAGE_SIZE,
+            start: (page - 1) * PAGE_SIZE
+          }
+        }).then(x => x.values);
+      },
+      startItem: async (n: T) => {
+        if (!getName(n)) {
+          throw new Error(`Unnamed ${getName(n)}`);
+        }
+        await this.serverRequest(path, {
+          method: 'DELETE',
+          qs: { name: getName(n) }
+        });
+      }
+    });
+  }
+
+  archiveRepositories(key: string) {
+    return Queue.run(CONCURRENCY, {
+      namespace: (r?: Repository) => r ? `[Archiving] Project ${key} Repository ${r.slug}` : `[Archiving] Project ${key} Repositories`,
+      fetchItems: (page: number) => {
+        return this.serverRequest<Repository>(`projects/${key}/repos`, {
+          qs: {
+            pageSize: PAGE_SIZE,
+            start: (page - 1) * PAGE_SIZE
+          }
+        })
+          .then(x => x.values);
+      },
+      startItem: async (r: Repository) => {
+        await this.archiveSubPermissions<PermissionGroup>(
+          `projects/${key}/permissions/groups`,
+          `Project ${key} Repository ${r.slug} Group`,
+          p => p.group.name
+        );
+        await this.archiveSubPermissions<PermissionUser>(
+          `projects/${key}/permissions/users`,
+          `Project ${key} Repository ${r.slug} User`,
+          p => p.user.name
+        );
+      }
+    });
+  }
+
+  archiveProjects() {
+    return Queue.run(CONCURRENCY, {
+      namespace: (p?: Project) => p ? `[Archiving] Project ${p.key}` : `[Archiving] Projects`,
+      fetchItems: (page: number) => {
+        return this.serverRequest<Project>(`projects`, {
+          qs: {
+            name: 'college',
+            pageSize: PAGE_SIZE,
+            start: (page - 1) * PAGE_SIZE
+          }
+        })
+          .then(x => x.values);
+      },
+      startItem: async (p: Project) => {
+        await this.archiveRepositories(p.key);
+
+        await this.archiveSubPermissions<PermissionGroup>(
+          `projects/${p.key}/permissions/groups`,
+          `Project ${p.key} Group`,
+          p => p.group.name
+        );
+
+        await this.archiveSubPermissions<PermissionUser>(
+          `projects/${p.key}/permissions/users`,
+          `Project ${p.key} User`,
+          p => p.user.name
+        );
+
+        await this.serverRequest(`projects/${p.key}`, { method: 'PUT', json: { ...p, public: false } });
+        await this.serverRequest(`projects/${p.key}/permissions/PROJECT_ADMIN/all`, { method: 'POST', qs: { allow: false } });
+        await this.serverRequest(`projects/${p.key}/permissions/PROJECT_WRITE/all`, { method: 'POST', qs: { allow: false } });
+        await this.serverRequest(`projects/${p.key}/permissions/PROJECT_READ/all`, { method: 'POST', qs: { allow: true } });
+      }
+    });
   }
 
   importRepositories(key: string) {
     return Queue.run(CONCURRENCY, {
-      namespace: (r?: Repository) => r ? `[Importing] Project ${key}: Repository ${r.slug}` : `[Importing] Project ${key}`,
+      namespace: (r?: Repository) => r ? `[Importing] Project ${key}: Repository ${r.slug}` : `[Importing] Project ${key} Repositories`,
       fetchItems: (page: number) => {
-        return this.serverRequest<Repository>(`projects/${key}/repos?pageSize=${PAGE_SIZE}&start=${(page - 1) * PAGE_SIZE}`)
+        return this.serverRequest<Repository>(`projects/${key}/repos`, {
+          qs: {
+            pageSize: PAGE_SIZE,
+            start: (page - 1) * PAGE_SIZE
+          }
+        })
           .then(x => x.values)
       },
       startItem: async (r: Repository) => {
@@ -96,7 +181,12 @@ export class BitbucketImporter {
     return Queue.run(CONCURRENCY, {
       namespace: (p?: Project) => p ? `[Importing] Project ${p.key}` : `[Importing] Projects`,
       fetchItems: (page: number) => {
-        return this.serverRequest<Project>(`projects?pageSize=${PAGE_SIZE}&start=${(page - 1) * PAGE_SIZE}`)
+        return this.serverRequest<Project>(`projects`, {
+          qs: {
+            pageSize: PAGE_SIZE,
+            start: (page - 1) * PAGE_SIZE
+          }
+        })
           .then(x => x.values);
       },
       startItem: async (p: Project) => {
@@ -118,7 +208,12 @@ export class BitbucketImporter {
     return Queue.run(CONCURRENCY, {
       namespace: (r?: Repository) => r ? `[Removing] Repository ${r.slug}` : `[Removing] Repositories`,
       fetchItems: (page: number) => {
-        return this.cloudRequest<Repository>(`repositories/${this.cloudOwner}?pagelen=${PAGE_SIZE}&page=${page}`)
+        return this.cloudRequest<Repository>(`repositories/${this.cloudOwner}`, {
+          qs: {
+            pagelen: PAGE_SIZE,
+            page
+          }
+        })
           .then(x => x.values);
       },
       startItem: (r: Repository) => {
@@ -131,7 +226,12 @@ export class BitbucketImporter {
     return Queue.run(CONCURRENCY, {
       namespace: (p?: Project) => p ? `[Removing] Project ${p.key}` : `[Removing] Projects`,
       fetchItems: (page: number) => {
-        return this.cloudRequest<Project>(`teams/${this.cloudOwner}/projects/?pagelen=${PAGE_SIZE}&page=${page}`)
+        return this.cloudRequest<Project>(`teams/${this.cloudOwner}/projects/`, {
+          qs: {
+            pagelen: PAGE_SIZE,
+            page
+          }
+        })
           .then(x => x.values);
       },
       startItem: (p: Project) => {

@@ -12,14 +12,8 @@ const PROCESS_DELAY = 1000;
 
 export class Queue<T, U=T> {
 
-  static async run<T, U>(size: number, provider: Provider<T, U>) {
-    try {
-      await new Queue(size, provider).run();
-    } catch (e) {
-      if (e.message !== 'Empty') {
-        throw e;
-      }
-    }
+  static run<T, U>(size: number, provider: Provider<T, U>) {
+    return new Queue(size, provider).run();
   }
 
   private _queue: T[];
@@ -57,21 +51,25 @@ export class Queue<T, U=T> {
         }
       }
     }
+    this.log(`gathered ${items.length} items`)
     return items;
   }
 
   async run() {
     this._queue = await this.gatherItems();
 
-    this.scheduleItem();
+    let done = !this.scheduleItem()
 
-    let active = 1;
-
-    while (active) {
+    while (!done) {
+      let active = Object.keys(this._working).length;
 
       while (active < this.size && this._queue.length) {
         this.scheduleItem();
-        active++;
+        active++
+      }
+
+      if (active === 0) {
+        break;
       }
 
       try {
@@ -96,15 +94,15 @@ export class Queue<T, U=T> {
         this.log(`failed ... ${e.message}`, item);
       }
 
-      active--;
-
       await sleep(PROCESS_DELAY);
     }
+
+    this.log('done')
   }
 
   scheduleItem() {
     if (this._queue.length === 0) {
-      throw new Error(`Empty`);
+      return false
     }
 
     let nextId = '' + (this._id++);
@@ -123,5 +121,6 @@ export class Queue<T, U=T> {
       .then(x => [nextId, x, item] as [string, U, T])
       .catch(e => { throw [nextId, e || { message: 'Unknown error' }, item] });
 
+    return true;
   }
 }
