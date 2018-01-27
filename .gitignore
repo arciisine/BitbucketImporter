@@ -1,2 +1,4 @@
 node_modules
 *.tsv
+!src/*.sh
+*.sh
