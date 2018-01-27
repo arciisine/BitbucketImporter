@@ -61,7 +61,7 @@ export function request<U>(baseOpts: requestPromise.RequestPromiseOptions, path:
     path += '?' + Object.keys(qs).map(x => `${encode(x)}=${encode(qs[x])}`).join('&')
   }
 
-  console.log(`${baseOpts.baseUrl}${path}`, opts)
+  log(`${baseOpts.baseUrl}${path}`, opts)
 
   return (requestPromise(path, opts) as any as Promise<U>);
 }

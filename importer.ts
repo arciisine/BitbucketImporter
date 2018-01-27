@@ -231,16 +231,17 @@ export class BitbucketImporter {
           namespace: (r?) => r ? `[Mapping] Project ${key}: Repository ${r.slug}` : `[Mapping] Project ${key} Repositories`,
           source: this.serverSource(`/projects/${key}/repos`),
           processItem: async r => {
+            console.log(r);
             const slug = this.genCloudSlug(key, r);
             out.push(
-              [`${this.serverHost}/scm/${key}/${r.key}.git`, `bitbucket.org/${this.cloudOwner}/${slug}.git`], //http,
-              [`${this.serverHost}/${key}/${r.key}.git`, `bitbucket.org:${this.cloudOwner}/${this.cloudOwner}/${slug}.git`], //ssh,
+              [`${this.serverHost}/scm/${key}/${r.slug}.git`, `bitbucket.org/${this.cloudOwner}/${slug}.git`], //http,
+              [`${this.serverHost}/${key}/${r.slug}.git`, `bitbucket.org:${this.cloudOwner}/${this.cloudOwner}/${slug}.git`], //ssh,
             )
           }
         });
       }
     });
-    console.log(
+    log(
       out.sort((a, b) => (b[0].length + b[1].length) - (a[0].length + a[1].length))
         .map(x => x.join('\t')).join('\n'));
   }
