@@ -3,6 +3,7 @@ import * as rimraf from 'rimraf';
 import * as util from 'util';
 import * as requestPromise from 'request-promise';
 
+export type Requestor<T> = (path: string, opts?: requestPromise.RequestPromiseOptions) => Promise<T>
 
 const DEFAULT_HEADERS: { [key: string]: string } = {
   'Accepts': 'application/json'
@@ -31,28 +32,36 @@ export function encode(val: string) {
   return ('' + val).replace(/ /g, '%20');
 }
 
-export function request<U>(url: string, cred: string, opts?: requestPromise.RequestPromiseOptions) {
-  let [user, password] = cred.split(':');
-  //log(`[Request] [${(opts && opts.method) || 'GET'}] ${url}`);
-  opts = opts || { json: true };
+export function requestor(baseUrl: string, creds: string, opts: requestPromise.RequestPromiseOptions = {}) {
+  let [user, password] = creds.split(':');
+
+  let def = {
+    baseUrl,
+    auth: { user, password },
+    headers: { ...DEFAULT_HEADERS, ...opts.headers || {} },
+    json: true
+  }
+
+  return request.bind(null, def);
+}
+
+export function request<U>(baseOpts: requestPromise.RequestPromiseOptions, path: string, extra: requestPromise.RequestPromiseOptions = {}) {
+  let opts = {
+    ...baseOpts,
+    ...extra,
+    headers: {
+      ...(baseOpts.headers || {}),
+      ...(extra || {}).headers
+    }
+  };
+
   if (opts.qs) {
     let qs = opts.qs;
     delete opts.qs;
-    url = `${url}?` + Object.keys(qs).map(x => `${encode(x)}=${encode(qs[x])}`).join('&')
+    path += '?' + Object.keys(qs).map(x => `${encode(x)}=${encode(qs[x])}`).join('&')
   }
 
-  let config = {
-    auth: { user, password },
-    headers: { ...DEFAULT_HEADERS, ...opts.headers || {} },
-    json: true,
-    ...opts
-  };
+  console.log(`${baseOpts.baseUrl}/${path}`, opts)
 
-  if (opts.body) {
-    config.headers['Content-Type'] = 'application/json'
-  }
-
-  console.log(url, config)
-
-  return requestPromise(url, config) as any as Promise<{ values: U[] }>;
+  return requestPromise(path, opts) as any as Promise<U>;
 }

@@ -15,9 +15,10 @@ async function run() {
     let importer = new BitbucketImporter(args.sHost, args.sCreds, args.cOwner, args.cCreds);
     log('Starting');
     //await importer.archiveServerProjects();
-    await importer.deleteCloudRepositories();
-    await importer.deleteCloudProjects();
-    await importer.importServerProjects();
+    //await importer.deleteCloudRepositories();
+    //await importer.deleteCloudProjects();
+    //await importer.importServerProjects();
+    await importer.generateRepoMapping();
     log('Done');
   } catch (e) {
     log('Failed', e);

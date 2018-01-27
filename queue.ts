@@ -9,27 +9,24 @@ export interface Provider<T, U> {
   failItem?: (err: any, t: T) => void;
 }
 
-const PROCESS_DELAY = 1000;
-const CONCURRENCY = 3;
-
 export class Queue<T, U> {
 
-  static run<T, U = any>(provider: Provider<T, U>, size: number = CONCURRENCY) {
-    return new Queue(provider, size).run();
+  static run<T, U = any>(size: number, delay: number, provider: Provider<T, U>) {
+    return new Queue(size, delay, provider).run();
   }
 
   private _queue: T[];
   private _working: { [key: string]: Promise<[string, U, T]> } = {};
   private _id = 0;
 
-  constructor(public provider: Provider<T, U>, public size: number = CONCURRENCY) { }
+  constructor(public size: number, public delay: number, public provider: Provider<T, U>) { }
 
   log(msg: string, item?: T) {
     log(this.provider.namespace(item) + ' ' + msg);
   }
 
   async run() {
-    this._queue = await this.provider.source.gatherItems();
+    this._queue = await this.provider.source.gatherItems(this.delay);
 
     let done = !this.scheduleItem()
 
@@ -67,7 +64,7 @@ export class Queue<T, U> {
         this.log(`failed ... ${e.message}`, item);
       }
 
-      await sleep(PROCESS_DELAY);
+      await sleep(this.delay);
     }
 
     this.log('done')

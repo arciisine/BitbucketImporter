@@ -1,7 +1,5 @@
 import { log, sleep } from './util';
 
-const PROCESS_DELAY = 1000;
-
 export type QueueSourceFetcher<T> = (page: number) => Promise<T[]>;
 
 export class QueueSource<T> {
@@ -14,7 +12,7 @@ export class QueueSource<T> {
     log(this.namespace ? this.namespace + ' ' + msg : msg);
   }
 
-  async gatherItems() {
+  async gatherItems(delay: number = 0) {
     if (this.cache) {
       return JSON.parse(JSON.stringify(this.cache)); //Clone
     }
@@ -30,7 +28,7 @@ export class QueueSource<T> {
         let fetched = await this.fetch(page);
         if (fetched.length) {
           items = items.concat(fetched);
-          await sleep(PROCESS_DELAY);
+          await sleep(delay);
         } else {
           done = true;
         }
