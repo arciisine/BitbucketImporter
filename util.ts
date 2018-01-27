@@ -13,7 +13,7 @@ export let rmdir = util.promisify(rimraf);
 export let sleep = (x: number) => new Promise(resolve => setTimeout(resolve, x));
 
 export function log(msg: string, ...args: any[]) {
-  console.log(`${new Date().toISOString()} - ${msg}`, ...args);
+  console.error(`${new Date().toISOString()} - ${msg}`, ...args);
 }
 
 export async function exec(command: string, opts: childProcess.ExecOptions = {}) {

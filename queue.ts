@@ -1,62 +1,35 @@
 import { log, sleep } from './util';
+import { QueueSource, QueueSourceFetcher } from './queue-source';
 
 export interface Provider<T, U> {
+  source: QueueSource<T>;
   namespace(item?: T): string;
-  fetchItems(page: number): Promise<T[]>;
-  startItem(t: T): Promise<U>;
+  processItem(t: T): Promise<U>;
   completeItem?(res: U, item: T): void;
   failItem?: (err: any, t: T) => void;
 }
 
 const PROCESS_DELAY = 1000;
+const CONCURRENCY = 3;
 
-export class Queue<T, U=T> {
+export class Queue<T, U> {
 
-  static run<T, U>(size: number, provider: Provider<T, U>) {
-    return new Queue(size, provider).run();
+  static run<T, U = any>(provider: Provider<T, U>, size: number = CONCURRENCY) {
+    return new Queue(provider, size).run();
   }
 
   private _queue: T[];
   private _working: { [key: string]: Promise<[string, U, T]> } = {};
   private _id = 0;
 
-  constructor(public size: number, public provider: Provider<T, U>) { }
+  constructor(public provider: Provider<T, U>, public size: number = CONCURRENCY) { }
 
   log(msg: string, item?: T) {
     log(this.provider.namespace(item) + ' ' + msg);
   }
 
-  async gatherItems() {
-    this.log('gathering items');
-
-    let done = false;
-    let items: T[] = [];
-    let page = 1;
-    while (!done) {
-      try {
-        let fetched = await this.provider.fetchItems(page);
-        if (fetched.length) {
-          items = items.concat(fetched);
-          await sleep(PROCESS_DELAY);
-        } else {
-          done = true;
-        }
-
-        page++;
-      } catch (e) {
-        if (items.length > 0) {
-          done = true;
-        } else {
-          throw e;
-        }
-      }
-    }
-    this.log(`gathered ${items.length} items`)
-    return items;
-  }
-
   async run() {
-    this._queue = await this.gatherItems();
+    this._queue = await this.provider.source.gatherItems();
 
     let done = !this.scheduleItem()
 
@@ -110,7 +83,7 @@ export class Queue<T, U=T> {
 
     this.log('started', item);
 
-    this._working[nextId] = this.provider.startItem(item)
+    this._working[nextId] = this.provider.processItem(item)
       .then(x => {
         delete this._working[nextId];
         return x;

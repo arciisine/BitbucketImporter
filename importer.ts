@@ -6,9 +6,9 @@ import { Queue } from './queue';
 import { exec, log, rmdir, request } from './util';
 
 import { mkdirSync } from 'fs';
+import { QueueSource } from './queue-source';
 
 const TEMP = `${os.tmpdir()}/import`;
-const CONCURRENCY = 3
 const PAGE_SIZE = 100;
 
 try {
@@ -21,7 +21,13 @@ function isPrivate(v: any) {
   return `${v}`.toLowerCase() !== 'true'
 }
 
+type PageHandler = (page: number) => { [key: string]: number };
+type Requestor<T> = (url: string, opts?: requestPromise.RequestPromiseOptions) => Promise<{ values: T[] }>
+
 export class BitbucketImporter {
+
+  private sourceCache: { [pkey: string]: QueueSource<any> } = {};
+
   constructor(
     public serverHost: string,
     public serverCredentials: string,
@@ -31,12 +37,47 @@ export class BitbucketImporter {
     public cloudUrl = `https://api.bitbucket.org/2.0`
   ) { }
 
-  async upload(pkey: string, key: string, slug: string) {
+  getSource<T>(url: string, req: Requestor<T>, ph: PageHandler, cache: boolean = true): QueueSource<T> {
+    let key = `${req.name}||${url}`;
+    let el = this.sourceCache[key];
+    if (!cache || !el) {
+      let namespace = url.split('/').filter(x => !!x).join(' ');
+      el = new QueueSource((page: number) => {
+        return req(url, { qs: ph(page) }).then(x => x.values);
+      }, namespace);
+      if (cache) {
+        this.sourceCache[key] = el;
+      }
+    }
+    return el as QueueSource<T>;
+  }
+
+  getServerSource<T>(url: string): QueueSource<T> {
+    return this.getSource<T>(url, this.serverRequest, p => ({
+      pageSize: PAGE_SIZE,
+      start: (p - 1) * PAGE_SIZE
+    }));
+  }
+
+  getCloudSource<T>(url: string): QueueSource<T> {
+    return this.getSource<T>(url, this.cloudRequest, p => ({
+      pagelen: PAGE_SIZE,
+      page: p
+    }));
+  }
+
+  genCloudSlug(key: string, r: Repository) {
+    return `${key}_${r.slug}`.toLowerCase().replace(/-/g, '_');
+  }
+
+  async upload(pkey: string, r: Repository) {
+    const slug = this.genCloudSlug(pkey, r);
+
     let path = `${TEMP}/${slug}`;
     try {
-      log(`[Cloning] Project ${pkey}: Repository ${key}`);
+      log(`[Cloning] Project ${pkey}: Repository ${r.key}`);
       await exec(`git clone --mirror https://${this.serverCredentials}@${this.serverHost}/scm/${pkey}/${key}.git ${path}`);
-      log(`[Pushing] Project ${pkey}: Repository ${key}`);
+      log(`[Pushing] Project ${pkey}: Repository ${r.key}`);
       await exec(`git push --mirror https://${this.cloudCredentials}@bitbucket.org/${this.cloudOwner}/${slug}.git`, { cwd: path })
     } finally {
       await rmdir(path);
@@ -58,17 +99,10 @@ export class BitbucketImporter {
   }
 
   archiveSubPermissions<T>(path: string, title: string, getName: (e: T) => string) {
-    return Queue.run(CONCURRENCY, {
-      namespace: (n?: T) => n ? `[Archiving] ${title} ${getName(n)}` : `[Archiving] ${title}s`,
-      fetchItems: (page: number) => {
-        return this.serverRequest<T>(path, {
-          qs: {
-            pageSize: PAGE_SIZE,
-            start: (page - 1) * PAGE_SIZE
-          }
-        }).then(x => x.values);
-      },
-      startItem: async (n: T) => {
+    return Queue.run<T>({
+      namespace: (n?) => n ? `[Archiving] ${title} ${getName(n)}` : `[Archiving] ${title}s`,
+      source: this.getServerSource(path),
+      processItem: async n => {
         if (!getName(n)) {
           throw new Error(`Unnamed ${getName(n)}`);
         }
@@ -81,18 +115,10 @@ export class BitbucketImporter {
   }
 
   archiveRepositories(key: string) {
-    return Queue.run(CONCURRENCY, {
-      namespace: (r?: Repository) => r ? `[Archiving] Project ${key} Repository ${r.slug}` : `[Archiving] Project ${key} Repositories`,
-      fetchItems: (page: number) => {
-        return this.serverRequest<Repository>(`projects/${key}/repos`, {
-          qs: {
-            pageSize: PAGE_SIZE,
-            start: (page - 1) * PAGE_SIZE
-          }
-        })
-          .then(x => x.values);
-      },
-      startItem: async (r: Repository) => {
+    return Queue.run<Repository>({
+      namespace: (r?) => r ? `[Archiving] Project ${key} Repository ${r.slug}` : `[Archiving] Project ${key} Repositories`,
+      source: this.getServerSource(`projects/${key}`),
+      processItem: async r => {
         await this.archiveSubPermissions<PermissionGroup>(
           `projects/${key}/permissions/groups`,
           `Project ${key} Repository ${r.slug} Group`,
@@ -107,20 +133,11 @@ export class BitbucketImporter {
     });
   }
 
-  archiveProjects() {
-    return Queue.run(CONCURRENCY, {
-      namespace: (p?: Project) => p ? `[Archiving] Project ${p.key}` : `[Archiving] Projects`,
-      fetchItems: (page: number) => {
-        return this.serverRequest<Project>(`projects`, {
-          qs: {
-            name: 'college',
-            pageSize: PAGE_SIZE,
-            start: (page - 1) * PAGE_SIZE
-          }
-        })
-          .then(x => x.values);
-      },
-      startItem: async (p: Project) => {
+  archiveServerProjects() {
+    return Queue.run<Project>({
+      namespace: (p?) => p ? `[Archiving] Project ${p.key}` : `[Archiving] Projects`,
+      source: this.getServerSource('projects'),
+      processItem: async p => {
         await this.archiveRepositories(p.key);
 
         await this.archiveSubPermissions<PermissionGroup>(
@@ -144,19 +161,12 @@ export class BitbucketImporter {
   }
 
   importRepositories(key: string) {
-    return Queue.run(CONCURRENCY, {
-      namespace: (r?: Repository) => r ? `[Importing] Project ${key}: Repository ${r.slug}` : `[Importing] Project ${key} Repositories`,
-      fetchItems: (page: number) => {
-        return this.serverRequest<Repository>(`projects/${key}/repos`, {
-          qs: {
-            pageSize: PAGE_SIZE,
-            start: (page - 1) * PAGE_SIZE
-          }
-        })
-          .then(x => x.values)
-      },
-      startItem: async (r: Repository) => {
-        const slug = `${key}_${r.slug}`.toLowerCase().replace(/-/g, '_');
+    return Queue.run<Repository>({
+      namespace: (r?) => r ? `[Importing] Project ${key}: Repository ${r.slug}` : `[Importing] Project ${key} Repositories`,
+      source: this.getServerSource(`projects/${key}`),
+      processItem: async r => {
+        const slug = this.genCloudSlug(key, r);
+
         let qualName = `${key}-${r.name}`
 
         await this.cloudRequest(`repositories/${this.cloudOwner}/${slug}`, {
@@ -172,24 +182,17 @@ export class BitbucketImporter {
             project: { key }
           }
         });
-        await this.upload(key, r.slug, slug);
+
+        await this.upload(key, r);
       }
     });
   }
 
-  importProjects(start: number = 0) {
-    return Queue.run(CONCURRENCY, {
-      namespace: (p?: Project) => p ? `[Importing] Project ${p.key}` : `[Importing] Projects`,
-      fetchItems: (page: number) => {
-        return this.serverRequest<Project>(`projects`, {
-          qs: {
-            pageSize: PAGE_SIZE,
-            start: (page - 1) * PAGE_SIZE
-          }
-        })
-          .then(x => x.values);
-      },
-      startItem: async (p: Project) => {
+  importServerProjects(start: number = 0) {
+    return Queue.run<Project>({
+      namespace: (p?) => p ? `[Importing] Project ${p.key}` : `[Importing] Projects`,
+      source: this.getServerSource(`projects`),
+      processItem: async p => {
         await this.cloudRequest(`teams/${this.cloudOwner}/projects/`, {
           method: 'POST',
           json: {
@@ -204,38 +207,50 @@ export class BitbucketImporter {
     });
   }
 
-  deleteRepositories() {
-    return Queue.run(CONCURRENCY, {
-      namespace: (r?: Repository) => r ? `[Removing] Repository ${r.slug}` : `[Removing] Repositories`,
-      fetchItems: (page: number) => {
-        return this.cloudRequest<Repository>(`repositories/${this.cloudOwner}`, {
-          qs: {
-            pagelen: PAGE_SIZE,
-            page
-          }
-        })
-          .then(x => x.values);
-      },
-      startItem: (r: Repository) => {
+  deleteCloudRepositories() {
+    return Queue.run<Repository>({
+      namespace: (r?) => r ? `[Removing] Repository ${r.slug}` : `[Removing] Repositories`,
+      source: this.getCloudSource(`repositories/${this.cloudOwner}`),
+      processItem: r => {
         return this.cloudRequest(`repositories/${this.cloudOwner}/${r.slug}`, { method: 'DELETE' });
       }
     })
   }
 
-  deleteProjects() {
-    return Queue.run(CONCURRENCY, {
-      namespace: (p?: Project) => p ? `[Removing] Project ${p.key}` : `[Removing] Projects`,
-      fetchItems: (page: number) => {
-        return this.cloudRequest<Project>(`teams/${this.cloudOwner}/projects/`, {
-          qs: {
-            pagelen: PAGE_SIZE,
-            page
-          }
-        })
-          .then(x => x.values);
-      },
-      startItem: (p: Project) => {
+  deleteCloudProjects() {
+    return Queue.run<Project>({
+      namespace: (p?) => p ? `[Removing] Project ${p.key}` : `[Removing] Projects`,
+      source: this.getCloudSource(`teams/${this.cloudOwner}/projects/`),
+      processItem: p => {
         return this.cloudRequest(`teams/${this.cloudOwner}/projects/${p.key}`, { method: 'DELETE' });
+      }
+    });
+  }
+
+  async generateRepoMapping() {
+    const out: [string, string][] = [];
+    await Queue.run<Project>({
+      namespace: (p?) => p ? `[Mapping] Project ${p.key}` : `[Mapping] Projects`,
+      source: this.getServerSource(`projects`),
+      processItem: async p => {
+        let key = p.key;
+
+        //Read repos
+        await Queue.run<Repository>({
+          namespace: (r?) => r ? `[Mapping] Project ${key}: Repository ${r.slug}` : `[Mapping] Project ${key} Repositories`,
+          source: this.getServerSource(`projects/${key}`),
+          processItem: async r => {
+            const slug = this.genCloudSlug(key, r);
+            out.push(
+              [`${this.serverHost}/scm/${key}/${r.key}.git`, `bitbucket.org/${this.cloudOwner}/${slug}.git`], //http,
+              [`${this.serverHost}/${key}/${r.key}.git`, `bitbucket.org:${this.cloudOwner}/${this.cloudOwner}/${slug}.git`], //ssh,
+            )
+          }
+        });
+
+        console.log(
+          out.sort((a, b) => (b[0].length + b[1].length) - (a[0].length + a[1].length))
+            .map(x => x.join('\t')).join('\n'));
       }
     });
   }
