@@ -1,9 +1,11 @@
 #!/bin/bash
 CURL_OPTS='-s'
+GIT_OPTS='-q'
 if [[ -n "$DEBUG" ]]; then
   if [[ $DEBUG -gt 1 ]]; then
     set -x
     CURL_OPTS='-v'
+    GIT_OPTS=''
   fi  
 fi
 
@@ -22,7 +24,7 @@ OLDIFS="$IFS"
 IFS='
 '
 
-DRYRUN=`echo $DRYRUN | sed -e 's|.*|log|'`
+DRYRUN=`echo $DRYRUN | sed -r -e 's|.+|log|'`
 REQ_FAIL=0
 
 SERVER_HOST=%%SERVER_HOST%%
@@ -78,9 +80,7 @@ for REPO in `find $PWD -name '.git' -type d`; do
   echo "  * Updating $REPO/config"
 
   if [[ -n "$DRYRUN" ]]; then
-    $DRYRUN sed -i.bak -r \
-      SED_EXPRESSIONS \
-      $REPO/config
+    $DRYRUN sed -i.bak -r SED_EXPRESSIONS $REPO/config
   else 
     sed -i.bak -r \
       %%SED_EXPRESSIONS%%
@@ -110,7 +110,7 @@ for REPO in `serverReq '/rest/api/1.0/users/'${SERVER_USERNAME}'/repos' | jq -r 
 do  
   echo "  * Moving ${REPO} to ${CLOUD_HOST}"
 
-  echo -n "    - Creating Repository ${REPO} in ${CLOUD_HOST}"
+  echo -n "    - Creating Repository ${REPO} in ${CLOUD_HOST}... "
   $DRYRUN cloudReq "/2.0/repositories/${CLOUD_USERNAME}/${REPO}" -d '{
   "scm": "git",
   "name": "'${REPO}'",
@@ -122,17 +122,15 @@ do
 
   GIT_DIR=$TEMP_DIR/$REPO
   echo -n "    - Cloning from ${SERVER_HOST} ... "
-  $DRYRUN git clone --mirror https://$SERVER_USERNAME:$SERVER_PASSWORD@$SERVER_HOST/scm/~$SERVER_USERNAME/$REPO.git 
+  $DRYRUN git clone $GIT_OPTS --mirror https://$SERVER_USERNAME:$SERVER_PASSWORD@$SERVER_HOST/scm/~$SERVER_USERNAME/$REPO.git $GIT_DIR
   [ $? -eq 0 ] && echo "done" || echo "failed"
 
   $DRYRUN pushd $GIT_DIR > /dev/null
   echo -n "    - Pushing to ${CLOUD_HOST} ... "
-  $DRYRUN git push --mirror https://$CLOUD_USERNAME:$CLOUD_PASSWORD@$CLOUD_HOST/$CLOUD_USERNAME/$REPO.git
+  $DRYRUN git push $GIT_OPTS --mirror https://$CLOUD_USERNAME:$CLOUD_PASSWORD@$CLOUD_HOST/$CLOUD_USERNAME/$REPO.git 
   [ $? -eq 0 ] && echo "done" || echo "failed"
  
   $DRYRUN popd > /dev/null
 done
 
 IFS="$OLDIFS"
-
-echo Done
