@@ -223,6 +223,8 @@ IFS='
 
 read_params ${@}
 
+mkdirp - $TEMP_DIR
+
 #Verify user session
 echo -e "\nInitializing"
 header "  * Validating ${CLOUD_HOST} credentials"
