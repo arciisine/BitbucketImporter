@@ -2,4 +2,4 @@ node_modules
 *.tsv
 *.sh
 !src/*.sh
-!import.sh
+!importer.sh
