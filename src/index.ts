@@ -28,6 +28,10 @@ const OPTIONS: { [key: string]: { flags: string[], label: string } } = {
   'cloudPass': {
     flags: ['cp', 'cloud-pass'],
     label: 'Cloud Password'
+  },
+  'dryRun': {
+    flags: ['dry', 'dry-run'],
+    label: 'Dry Run'
   }
 }
 
@@ -38,7 +42,10 @@ async function run() {
   });
 
   let args = minimist(process.argv, {});
-  let cfg: { [key: string]: any } = {};
+  let cfg: { [key: string]: any } = {
+    cloudHost: 'bitbucket.org'
+  };
+
   for (let prop of Object.keys(OPTIONS)) {
     for (let flg of OPTIONS[prop].flags) {
       if (flg in args) {
@@ -60,7 +67,10 @@ async function run() {
       process.exit(1);
     }
 
-    let importer = new BitbucketImporter(cfg.serverHost, cfg.serverUser, cfg.serverPass, cfg.cloudOwner, cfg.cloudUser, cfg.cloudPass);
+    let importer = new BitbucketImporter(
+      cfg.serverHost, cfg.serverUser, cfg.serverPass,
+      cfg.cloudOwner, cfg.cloudUser, cfg.cloudPass, cfg.cloudHost,
+      cfg.dryRun !== undefined);
 
     log(`Starting ${op}`);
     await importer.verifyCredentials();

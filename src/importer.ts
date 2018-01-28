@@ -40,17 +40,20 @@ export class BitbucketImporter {
     public cloudOwner: string,
     public cloudUser: string,
     public cloudPass: string,
-    public cloudHost: string = 'bitbucket.org'
+    public cloudHost: string,
+    public dryRun: boolean = false
   ) {
     this.cloudRequest = requestor({
       baseUrl: `https://api.${cloudHost}/2.0`,
-      auth: { user: cloudUser, password: cloudPass }
+      auth: { user: cloudUser, password: cloudPass },
+      dryRun
     });
 
     this.serverRequest = requestor({
       baseUrl: `https://${serverHost}/rest/api/1.0`,
       auth: { user: serverUser, password: serverPass },
-      headers: { 'X-Atlassian-Token': 'no-check' }
+      headers: { 'X-Atlassian-Token': 'no-check' },
+      dryRun
     });
 
     this.serverSource = (p, c) => this.getSource(this.serverRequest, p, 100,
@@ -61,6 +64,10 @@ export class BitbucketImporter {
 
     this.cloudRun = p => Queue.run(p, 3, 2000);
     this.serverRun = p => Queue.run(p, 20);
+
+    if (dryRun) {
+      (log as any).prefix = '[DRY RUN]'
+    }
   }
 
   async verifyCredentials() {

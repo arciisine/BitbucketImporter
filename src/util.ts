@@ -16,7 +16,7 @@ export let rmdir = util.promisify(rimraf);
 export let sleep = (x: number) => new Promise(resolve => setTimeout(resolve, x));
 
 export function log(msg: string, ...args: any[]) {
-  console.error(`${new Date().toISOString()} - ${msg}`, ...args);
+  console.error(`${new Date().toISOString()} ${(log as any)['prefix'] || ''}- ${msg}`, ...args);
 }
 
 export async function exec(command: string, opts: childProcess.ExecOptions = {}) {
@@ -34,7 +34,7 @@ export function encode(val: string) {
   return ('' + val).replace(/ /g, '%20');
 }
 
-export function requestor(opts: requestPromise.RequestPromiseOptions) {
+export function requestor(opts: requestPromise.RequestPromiseOptions & { dryRun?: boolean }) {
   let def = {
     ...opts,
     headers: { ...DEFAULT_HEADERS, ...opts.headers || {} },
@@ -44,7 +44,7 @@ export function requestor(opts: requestPromise.RequestPromiseOptions) {
   return request.bind(null, def);
 }
 
-export function request<U>(baseOpts: requestPromise.RequestPromiseOptions, path: string, extra: requestPromise.RequestPromiseOptions = {}) {
+export function request<U>(baseOpts: requestPromise.RequestPromiseOptions & { dryRun?: boolean }, path: string, extra: requestPromise.RequestPromiseOptions = {}) {
   let opts = {
     ...baseOpts,
     ...extra,
@@ -60,9 +60,16 @@ export function request<U>(baseOpts: requestPromise.RequestPromiseOptions, path:
     path += '?' + Object.keys(qs).map(x => `${encode(x)}=${encode(qs[x])}`).join('&')
   }
 
-  log(`${baseOpts.baseUrl}${path}`, opts)
+  const method = ('' + (opts.method || 'GET')).toUpperCase()
+  const suppress = !!opts.dryRun && method !== 'GET';
 
-  return (requestPromise(path, opts) as any as Promise<U>);
+  log(`${suppress ? '[SKIPPED] ' : ''}${method} ${baseOpts.baseUrl}${path}`, opts);
+
+  if (suppress) {
+    return Promise.resolve({});
+  } else {
+    return (requestPromise(path, opts) as any as Promise<U>);
+  }
 }
 
 export function CacheFile(f: string): MethodDecorator {
