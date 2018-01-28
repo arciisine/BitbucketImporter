@@ -2,7 +2,14 @@ import * as minimist from 'minimist';
 import { BitbucketImporter } from './importer';
 import { log } from './util';
 
+const VALID_OPS = ['archive', 'import', 'userscript'];
 
+const OPTIONS: { [key: string]: string } = {
+  sHost: 'Server Host',
+  sCreds: 'Server user:pass',
+  cOwner: 'Cloud Team',
+  cCreds: 'Cloud user:pass'
+}
 
 async function run() {
   process.on('unhandledRejection', error => {
@@ -10,12 +17,16 @@ async function run() {
     process.exit(1);
   });
 
-
   let args = minimist(process.argv, {});
   try {
-    let op = args[args.length - 1];
-    if (!args.sHost || !args.sCreds || !args.cOwner || !args.cCreds || ['archive', 'import', 'userscript'].indexOf(op) < 0) {
-      console.log('[USAGE] ./importer.sh -sHost <Server Host> -sCreds <Server user:pass> -cOwner <Cloud Team> -cCred <Cloud user:pass> [archive|import|userscript]')
+    let op = process.argv.pop();
+    let valid = VALID_OPS.indexOf(op!) < 0 &&
+      Object.keys(OPTIONS).reduce((acc, k) => { acc = acc && !args[k]; return acc }, true);
+
+    if (!valid) {
+      const flags = Object.keys(OPTIONS).map(x => `-${x} <${OPTIONS[x]}>`).join(' ');
+      const ops = VALID_OPS.join('|')
+      console.log(`[USAGE] ./importer.sh ${flags} [${ops}]`)
       process.exit(1);
     }
 
