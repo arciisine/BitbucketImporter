@@ -1,6 +1,57 @@
 #!/bin/bash
-([[ -n "$DEBUG" ]] || [[ -n "$DRYRUN" ]]) && COMMENT=1 || COMMENT=0
-([[ "$DEBUG" -eq 1 ]]) && VERBOSE=1 || VERBOSE=0
+VERBOSE=0
+DEBUG=0
+DRYRUN=0
+COMMENT=0
+
+POSITIONAL=()
+while [[ $# -gt 0 ]]
+do
+key="$1"
+
+case $key in
+    --verbose|-v)
+    VERBOSE=1;shift
+    ;;
+    --debug|-d)
+    DEBUG=1;shift
+    ;;
+    --server-user|--su)
+    SERVER_USER="$2"; shift; shift
+    ;;
+    --server-pass|--sp)
+    SERVER_PASS="$2"; shift; shift
+    ;;
+    --cloud-user|--cu)
+    CLOUD_USER="$2"; shift; shift
+    ;;
+    --cloud-pass|--cp)
+    CLOUD_PASS="$2"; shift; shift
+    ;;
+    *)    # unknown option
+    ACTION=$1
+    shift # past argument
+    ;;
+esac
+done
+
+[[ -z "$CLOUD_USER" ]] && read -p "${CLOUD_HOST} Username: " CLOUD_USER && echo
+[[ -z "$CLOUD_PASS" ]] && read -s -p "${CLOUD_HOST} Password: " CLOUD_PASS && echo
+[[ -z "$SERVER_USER" ]] && read -p "${SERVER_HOST} Username: " SERVER_USER && echo
+[[ -z "$SERVER_PASS" ]] && read -s -p "${SERVER_HOST} Password: " SERVER_PASS && echo
+
+if !([[ "$ACTION" == 'apply' ]] || [[ "$ACTION" == 'test' ]]) || \
+   [[ -z "$CLOUD_USER" ]] || [[ -z "$CLOUD_PASS" ]] || \
+   [[ -z "$SERVER_USER" ]] || [[ -z "$SERVER_PASS" ]];
+then
+  SELF=`basename $0`
+  echo "Usage $SELF [--server-user|--su <user>] [--server-pass|--sp <pw>] [--cloud-user|--cu <user>] [--cloud-pw|--cp <pw>] (apply|test)"
+  exit 1
+fi 
+
+[[ "$ACTION" -eq 'test' ]] && DRYRUN=1
+
+([ $DEBUG -ge 0 ] || [ $DRYRUN -eq 1 ]) && COMMENT=1 || COMMENT=0
 
 if [ $VERBOSE -eq 1 ]; then
   set -x
@@ -11,15 +62,9 @@ else
   GIT_OPTS='-q'
 fi
 
-CLOUD_USERNAME=$1
-CLOUD_PASSWORD=$2
-SERVER_USERNAME=$3
-SERVER_PASSWORD=$4
-
-[[ -z "$CLOUD_USERNAME" ]] && read -p "${CLOUD_HOST} Username: " CLOUD_USERNAME && echo
-[[ -z "$CLOUD_PASSWORD" ]] && read -s -p "${CLOUD_HOST} Password: " CLOUD_PASSWORD && echo
-[[ -z "$SERVER_USERNAME" ]] && read -p "${SERVER_HOST} Username: " SERVER_USERNAME && echo
-[[ -z "$SERVER_PASSWORD" ]] && read -s -p "${SERVER_HOST} Password: " SERVER_PASSWORD && echo
+if [ $DRYRUN -eq 1 ]; then
+  DRYRUN=log
+fi
 
 #Handle spaces in file names
 OLDIFS="$IFS"
@@ -51,9 +96,9 @@ function check_req() {
 
 function server_req() {
   REQ_FAIL=0
-  [ $COMMENT -eq 1 ] && log curl "https://"$SERVER_HOST${@} 1>&2
+  log curl "https://"$SERVER_HOST${@} 1>&2
   if ! curl $CURL_OPTS -f -H 'Accepts: application/json' -H 'X-Atlassian-Token:no-check' \
-    -u "${SERVER_USERNAME}:${SERVER_PASSWORD}" "https://$SERVER_HOST"${@};
+    -u "${SERVER_USER}:${SERVER_PASS}" "https://$SERVER_HOST"${@};
   then
     REQ_FAIL=1
   fi  
@@ -61,9 +106,9 @@ function server_req() {
 
 function cloud_req() {
   REQ_FAIL=0
-  [ $COMMENT -eq 1 ] && log curl "https://api.$CLOUD_HOST"${@} 1>&2
+  log curl "https://api.$CLOUD_HOST"${@} 1>&2
   if ! curl $CURL_OPTS -f -H 'Accepts: application/json' \
-    -u "${CLOUD_USERNAME}:${CLOUD_PASSWORD}" "https://api.$CLOUD_HOST"${@};
+    -u "${CLOUD_USER}:${CLOUD_PASS}" "https://api.$CLOUD_HOST"${@};
   then
     REQ_FAIL=1
   fi    
@@ -77,7 +122,7 @@ cloud_req '/2.0/user' > /dev/null
 check_req "success" quit "${CLOUD_HOST} credentials invalid"
 
 echo -n "  * Validating ${SERVER_HOST} credentials... "
-server_req "/rest/api/1.0/users/$SERVER_USERNAME" > /dev/null
+server_req "/rest/api/1.0/users/$SERVER_USER" > /dev/null
 check_req "success" quit "${SERVER_HOST} credentials invalid"
 
 #Update all repos from current location
@@ -113,7 +158,7 @@ do
   KEY=`echo $ROW | awk -F '\t' '{ print $2 }'`
 
   echo -n "  * Migrating key ${LABEL} to ${CLOUD_HOST}: ${KEY:0:20} ..."
-  $DRYRUN cloud_req "/1.0/users/${CLOUD_USERNAME}/ssh-keys" \
+  $DRYRUN cloud_req "/1.0/users/${CLOUD_USER}/ssh-keys" \
     -d "label=$LABEL" \
     --data-urlencode "key=$KEY" > /dev/null
 
@@ -123,7 +168,7 @@ done
 #Migrate Personal Repos
 echo
 echo "Migrating personal repositories"
-for REPO in `server_req '/rest/api/1.0/users/'${SERVER_USERNAME}'/repos' | jq -r '.values[].slug'`; 
+for REPO in `server_req '/rest/api/1.0/users/'${SERVER_USER}'/repos' | jq -r '.values[].slug'`; 
 do  
   echo "  * Moving ${REPO} to ${CLOUD_HOST}"
   TEMP_PROJ=$TEMP_DIR/project.`clean_name $REPO`.json
@@ -137,7 +182,7 @@ do
   "fork_policy": "no_public_forks"
 }' > $TEMP_PROJ
 
-  $DRYRUN cloud_req  "/2.0/repositories/${CLOUD_USERNAME}/${REPO}" -H 'Content-type: application/json' -d "@$TEMP_PROJ" > /dev/null
+  $DRYRUN cloud_req  "/2.0/repositories/${CLOUD_USER}/${REPO}" -H 'Content-type: application/json' -d "@$TEMP_PROJ" > /dev/null
   check_req "done" echo "failed"
 
   if [ $REQ_FAIL -eq 0 ]; then
@@ -146,12 +191,12 @@ do
     rm -rf $GIT_DIR 2> /dev/null
 
     echo -n "    - Cloning from ${SERVER_HOST} ... "
-    $DRYRUN git clone $GIT_OPTS --mirror https://$SERVER_USERNAME:$SERVER_PASSWORD@$SERVER_HOST/scm/~$SERVER_USERNAME/$REPO.git $GIT_DIR
+    $DRYRUN git clone $GIT_OPTS --mirror https://$SERVER_USER:$SERVER_PASS@$SERVER_HOST/scm/~$SERVER_USER/$REPO.git $GIT_DIR
     [ $? -eq 0 ] && echo "done" || echo "failed"
 
     $DRYRUN pushd $GIT_DIR > /dev/null
     echo -n "    - Pushing to ${CLOUD_HOST} ... "
-    $DRYRUN git push $GIT_OPTS --mirror https://$CLOUD_USERNAME:$CLOUD_PASSWORD@$CLOUD_HOST/$CLOUD_USERNAME/$REPO.git 
+    $DRYRUN git push $GIT_OPTS --mirror https://$CLOUD_USER:$CLOUD_PASS@$CLOUD_HOST/$CLOUD_USER/$REPO.git 
     [ $? -eq 0 ] && echo "done" || echo "failed"
    
     $DRYRUN popd > /dev/null

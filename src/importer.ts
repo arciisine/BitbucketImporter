@@ -57,14 +57,14 @@ export class BitbucketImporter {
 
   async verifyCredentials() {
     try {
-      await this.cloudRequest('/2.0/user');
+      await this.cloudRequest('/user');
     } catch (e) {
       log(`${this.cloudHost} credentials invalid`)
       throw e;
     }
 
     try {
-      await this.serverRequest(`/rest/api/1.0/users/${this.serverCredentials.split(':')[0]}`);
+      await this.serverRequest(`/users`);
     } catch (e) {
       log(`${this.serverHost} credentials invalid`)
       throw e;
