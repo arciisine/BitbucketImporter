@@ -292,7 +292,7 @@ export class BitbucketImporter {
 
     let sshConfigs = mapping.ssh.map(x => [
       `(ssh://)?git@${x[0]}`,
-      `ssh://git@${x[1]}`
+      `git@${x[1]}`
     ]);
 
     let configs = (httpConfigs.concat(sshConfigs)).sort((a, b) => (b[0].length - a[0].length));
