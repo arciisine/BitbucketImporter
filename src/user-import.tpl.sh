@@ -1,8 +1,13 @@
 #!/bin/bash
+SERVER_HOST=%%SERVER_HOST%%
+CLOUD_HOST=%%CLOUD_HOST%%
+TEMP_DIR=%%TEMP_DIR%%
+
 VERBOSE=0
 DEBUG=0
-DRYRUN=0
+DRYRUN_FLAG=0
 COMMENT=0
+
 
 POSITIONAL=()
 while [[ $# -gt 0 ]]
@@ -49,9 +54,9 @@ then
   exit 1
 fi 
 
-[[ "$ACTION" -eq 'test' ]] && DRYRUN=1
+[[ "$ACTION" == 'test' ]] && DRYRUN_FLAG=1
 
-([ $DEBUG -ge 0 ] || [ $DRYRUN -eq 1 ]) && COMMENT=1 || COMMENT=0
+([ $DEBUG -eq 1 ] || [ $DRYRUN_FLAG -eq 1 ]) && COMMENT=1 || COMMENT=0
 
 if [ $VERBOSE -eq 1 ]; then
   set -x
@@ -62,21 +67,13 @@ else
   GIT_OPTS='-q'
 fi
 
-if [ $DRYRUN -eq 1 ]; then
-  DRYRUN=log
-fi
+[ $DRYRUN_FLAG -eq 1 ] && DRYRUN=log || DRYRUN=""
 
 #Handle spaces in file names
 OLDIFS="$IFS"
 IFS='
 '
-
-DRYRUN=`echo $DRYRUN | sed -r -e 's|.+|log|'`
 REQ_FAIL=0
-
-SERVER_HOST=%%SERVER_HOST%%
-CLOUD_HOST=%%CLOUD_HOST%%
-TEMP_DIR=%%TEMP_DIR%%
 
 function quit() {
   echo $1; exit $2
