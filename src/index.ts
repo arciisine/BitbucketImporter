@@ -20,7 +20,7 @@ async function run() {
   let args = minimist(process.argv, {});
   try {
     let op = process.argv.pop();
-    let valid = VALID_OPS.indexOf(op!) < 0 &&
+    let valid = VALID_OPS.indexOf(op!) >= 0 &&
       Object.keys(OPTIONS).reduce((acc, k) => { acc = acc && !args[k]; return acc }, true);
 
     if (!valid) {
