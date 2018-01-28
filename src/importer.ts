@@ -81,9 +81,9 @@ export class BitbucketImporter {
 
     let path = `${TEMP}/${slug}`;
     try {
-      log(`[Cloning] Project ${pkey}: Repository ${r.key}`);
+      log(`[Cloning] Project ${pkey}: Repository ${r.slug}`);
       await exec(`git clone --mirror https://${this.serverCredentials}@${this.serverHost}/scm/${pkey}/${r.slug}.git ${path}`);
-      log(`[Pushing] Project ${pkey}: Repository ${r.key}`);
+      log(`[Pushing] Project ${pkey}: Repository ${r.slug}`);
       await exec(`git push --mirror https://${this.cloudCredentials}@${this.cloudHost}/${this.cloudOwner}/${slug}.git`, { cwd: path })
     } finally {
       await rmdir(path);
