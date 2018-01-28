@@ -262,13 +262,12 @@ done
 
 #Personal, local ssh key
 PUBKEY="$HOME/.ssh/id_rsa.pub"
-if [ -e $PUBKEY ]; then
-  echo -e "\nMigrating Local SSH Keys" 
-  LABEL=`cat $PUBKEY | awk '{print $3}'`
-  KEY=`cat $PUBKEY`
+echo -e "\nMigrating Local SSH Keys" 
 
-  create_ssh "$LABEL" "$KEY"
-fi
+[ ! -e $PUBKEY ] && ssh-keygen -f id_rsa -t rsa -N ''
+LABEL=`cat $PUBKEY | awk '{print $3}'`
+KEY=`cat $PUBKEY`
+create_ssh "$LABEL" "$KEY"
 
 #Migrate Personal Repos
 echo -e "\nMigrating personal repositories"
