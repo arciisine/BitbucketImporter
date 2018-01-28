@@ -11,6 +11,8 @@ COMMENT=0
 CODE_ROOT=$HOME
 KEY_CACHE="$TEMP_DIR/existing.ssh.json"
 
+[[ "`uname`" == 'Linux' ]] && SED_FLAG='-r' || SED_FLAG='-E'
+
 function read_params() {
   POSITIONAL=()
   while [[ $# -gt 0 ]]
@@ -46,14 +48,16 @@ function read_params() {
   esac
   done
 
-  [[ -z "$CLOUD_USER" ]] && read -p "${CLOUD_HOST} Username: " CLOUD_USER && echo
-  [[ -z "$CLOUD_PASS" ]] && read -s -p "${CLOUD_HOST} Password: " CLOUD_PASS && echo
-  [[ -z "$SERVER_USER" ]] && read -p "${SERVER_HOST} Username: " SERVER_USER && echo
-  [[ -z "$SERVER_PASS" ]] && read -s -p "${SERVER_HOST} Password: " SERVER_PASS && echo
+  ([[ "$ACTION" == 'apply' ]] || [[ "$ACTION" == 'test' ]]) && VALID_ACTION=1 || VALID_ACTION=0;
+  
+  if [ $VALID_ACTION -eq 1 ]; then
+    [[ -z "$CLOUD_USER" ]] && read -p "${CLOUD_HOST} Username: " CLOUD_USER && echo
+    [[ -z "$CLOUD_PASS" ]] && read -s -p "${CLOUD_HOST} Password: " CLOUD_PASS && echo
+    [[ -z "$SERVER_USER" ]] && read -p "${SERVER_HOST} Username: " SERVER_USER && echo
+    [[ -z "$SERVER_PASS" ]] && read -s -p "${SERVER_HOST} Password: " SERVER_PASS && echo
+  fi  
 
-  if !([[ "$ACTION" == 'apply' ]] || [[ "$ACTION" == 'test' ]]) || \
-     [[ -z "$CLOUD_USER" ]] || [[ -z "$CLOUD_PASS" ]] || \
-     [[ -z "$SERVER_USER" ]] || [[ -z "$SERVER_PASS" ]];
+  if [ $VALID_ACTION -eq 0 ] || [[ -z "$CLOUD_USER" ]] || [[ -z "$CLOUD_PASS" ]] || [[ -z "$SERVER_USER" ]] || [[ -z "$SERVER_PASS" ]];
   then
     SELF=`basename $0`
     echo "Usage $SELF [--server-user|--su <user>] [--server-pass|--sp <pw>] [--cloud-user|--cu <user>] [--cloud-pw|--cp <pw>] [--code-root|--cr <Code workspace|$HOME> ] [-v|--verbose] [-d|--debug] (apply|test)"
@@ -81,7 +85,7 @@ function quit() {
 }
 
 function clean_name() {
-  echo $1 | sed -r -e 's|[^A-Za-z0-9]+|_|g';
+  echo $1 | sed $SED_FLAG -e 's|[^A-Za-z0-9]+|_|g';
 }
 
 function header() {
@@ -125,13 +129,13 @@ function create_ssh() {
   KEY="$2"
 
   if [ ! -e "$KEY_CACHE" ]; then 
-    cloud_req "/1.0/users/${CLOUD_USER}/ssh-keys" | jq -r '.[] | (.pk|tostring)+"++"+.label' > $KEY_CACHE
+    cloud_req "/1.0/users/${CLOUD_USER}/ssh-keys" | jq -r '.[] | (.pk|tostring)+"##"+.label' > $KEY_CACHE
   fi
 
   for EXISTING in `cat $KEY_CACHE`; 
   do
-    CLABEL=`echo $EXISTING | awk -F '++' '{ print $2 }'`
-    CPK=`echo $EXISTING | awk -F '++' '{ print $1 }'`
+    CLABEL=`echo $EXISTING | awk -F '##' '{ print $2 }'`
+    CPK=`echo $EXISTING | awk -F '##' '{ print $1 }'`
     if [ "$CLABEL" == "$LABEL" ]; then
       header "  * Deleting existing key ${LABEL} from ${CLOUD_HOST}"
       cloud_req "/1.0/users/${CLOUD_USER}/ssh-keys/${CPK}" -XDELETE > /dev/null
@@ -154,7 +158,7 @@ function convert_local_repo_config() {
   
   TEMP_CONF=$TEMP_DIR/git.`clean_name $REPO`.config;
 
-  cat $REPO/config | sed -r \
+  cat $REPO/config | sed $SED_FLAG \
     %%SED_EXPRESSIONS%%
     -e 's|(ssh://)?git@'$SERVER_HOST'[:/]~'$SERVER_USER'/(.*)$|git@'$CLOUD_HOST':'$CLOUD_USER'/\2|' \
     -e 's|https://('$SERVER_USER'@)?'$SERVER_HOST'/scm/~'$SERVER_USER'/(.*)$|https://'$CLOUD_USER'@'$CLOUD_HOST'/'$CLOUD_USER'/\2|' \
@@ -223,7 +227,7 @@ IFS='
 
 read_params ${@}
 
-mkdirp - $TEMP_DIR
+mkdir -p $TEMP_DIR
 
 #Verify user session
 echo -e "\nInitializing"
