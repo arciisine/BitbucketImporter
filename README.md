@@ -23,4 +23,4 @@ What is needed:
 
 How to run:
 * npm install (first time only)
-* ./importer.sh --sHost <bitbucker server host> --sCreds '<server-admin-user:password>' --cOwner <bitbucket cloud team> --cCreds '<bitbucket cloud user>:<password> [archive|import|userscript]'
+* `[USAGE] ./importer.sh --sh|--server-host <Server Host> --su|--server-user <Server User> --sp|--server-pass <Server Password> --ct|--cloud-team <Cloud Team> --cu|--cloud-user <Cloud User> --cp|--cloud-pass <Cloud Password> [archive|import|userscript]`

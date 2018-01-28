@@ -4,11 +4,31 @@ import { log } from './util';
 
 const VALID_OPS = ['archive', 'import', 'userscript'];
 
-const OPTIONS: { [key: string]: string } = {
-  sHost: 'Server Host',
-  sCreds: 'Server user:pass',
-  cOwner: 'Cloud Team',
-  cCreds: 'Cloud user:pass'
+const OPTIONS: { [key: string]: { flags: string[], label: string } } = {
+  'serverHost': {
+    flags: ['sh', 'server-host'],
+    label: 'Server Host'
+  },
+  'serverUser': {
+    flags: ['su', 'server-user'],
+    label: 'Server User'
+  },
+  'serverPass': {
+    flags: ['sp', 'server-pass'],
+    label: 'Server Password'
+  },
+  'cloudTeam': {
+    flags: ['ct', 'cloud-team'],
+    label: 'Cloud Team'
+  },
+  'cloudUser': {
+    flags: ['cu', 'cloud-user'],
+    label: 'Cloud User'
+  },
+  'cloudPass': {
+    flags: ['cp', 'cloud-pass'],
+    label: 'Cloud Password'
+  }
 }
 
 async function run() {
@@ -18,19 +38,29 @@ async function run() {
   });
 
   let args = minimist(process.argv, {});
+  let cfg: { [key: string]: any } = {};
+  for (let prop of Object.keys(OPTIONS)) {
+    for (let flg of OPTIONS[prop].flags) {
+      if (flg in args) {
+        cfg[prop] = args[flg]
+        break;
+      }
+    }
+  }
+
   try {
     let op = process.argv.pop();
     let valid = VALID_OPS.indexOf(op!) >= 0 &&
-      Object.keys(OPTIONS).reduce((acc, k) => { acc = acc && !!args[k]; return acc }, true);
+      Object.keys(OPTIONS).reduce((acc, k) => { acc = acc && !!cfg[k]; return acc }, true);
 
     if (!valid) {
-      const flags = Object.keys(OPTIONS).map(x => `-${x} <${OPTIONS[x]}>`).join(' ');
+      const flags = Object.keys(OPTIONS).map(x => `${OPTIONS[x].flags.map(x => `--${x}`).join('|')} <${OPTIONS[x].label}>`).join(' ');
       const ops = VALID_OPS.join('|')
       console.log(`[USAGE] ./importer.sh ${flags} [${ops}]`)
       process.exit(1);
     }
 
-    let importer = new BitbucketImporter(args.sHost, args.sCreds, args.cOwner, args.cCreds);
+    let importer = new BitbucketImporter(cfg.serverHost, cfg.serverUser, cfg.serverPass, cfg.cloudOwner, cfg.cloudUser, cfg.cloudPass);
 
     log(`Starting ${op}`);
     await importer.verifyCredentials();

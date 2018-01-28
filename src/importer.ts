@@ -35,13 +35,21 @@ export class BitbucketImporter {
 
   constructor(
     public serverHost: string,
-    public serverCredentials: string,
+    public serverUser: string,
+    public serverPass: string,
     public cloudOwner: string,
-    public cloudCredentials: string,
+    public cloudUser: string,
+    public cloudPass: string,
     public cloudHost: string = 'bitbucket.org'
   ) {
-    this.cloudRequest = requestor(`https://api.${cloudHost}/2.0`, cloudCredentials);
-    this.serverRequest = requestor(`https://${serverHost}/rest/api/1.0`, serverCredentials, {
+    this.cloudRequest = requestor({
+      baseUrl: `https://api.${cloudHost}/2.0`,
+      auth: { user: cloudUser, password: cloudPass }
+    });
+
+    this.serverRequest = requestor({
+      baseUrl: `https://${serverHost}/rest/api/1.0`,
+      auth: { user: serverUser, password: serverPass },
       headers: { 'X-Atlassian-Token': 'no-check' }
     });
 
@@ -98,9 +106,9 @@ export class BitbucketImporter {
     let path = `${TEMP}/${slug}`;
     try {
       log(`[Cloning] Project ${pkey}: Repository ${r.slug}`);
-      await exec(`git clone --mirror https://${this.serverCredentials}@${this.serverHost}/scm/${pkey}/${r.slug}.git ${path}`);
+      await exec(`git clone --mirror https://${this.serverUser}:${this.serverPass}@${this.serverHost}/scm/${pkey}/${r.slug}.git ${path}`);
       log(`[Pushing] Project ${pkey}: Repository ${r.slug}`);
-      await exec(`git push --mirror https://${this.cloudCredentials}@${this.cloudHost}/${this.cloudOwner}/${slug}.git`, { cwd: path })
+      await exec(`git push --mirror https://${this.cloudUser}:${this.cloudPass}@${this.cloudHost}/${this.cloudOwner}/${slug}.git`, { cwd: path })
     } finally {
       await rmdir(path);
     }

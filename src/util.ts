@@ -3,6 +3,7 @@ import * as rimraf from 'rimraf';
 import * as util from 'util';
 import * as requestPromise from 'request-promise';
 import * as fs from 'fs';
+import { RequestPromiseOptions } from 'request-promise';
 
 export type Requestor<T> = (path: string, opts?: requestPromise.RequestPromiseOptions) => Promise<T>
 
@@ -33,12 +34,9 @@ export function encode(val: string) {
   return ('' + val).replace(/ /g, '%20');
 }
 
-export function requestor(baseUrl: string, creds: string, opts: requestPromise.RequestPromiseOptions = {}) {
-  let [user, password] = creds.split(':');
-
+export function requestor(opts: requestPromise.RequestPromiseOptions) {
   let def = {
-    baseUrl,
-    auth: { user, password },
+    ...opts,
     headers: { ...DEFAULT_HEADERS, ...opts.headers || {} },
     json: true
   }
