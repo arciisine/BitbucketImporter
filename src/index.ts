@@ -4,34 +4,40 @@ import { log } from './util';
 
 const VALID_OPS = ['archive', 'import', 'userscript'];
 
-const OPTIONS: { [key: string]: { flags: string[], label: string } } = {
+const OPTIONS: { [key: string]: { flags: string[], label: string, required?: boolean } } = {
   'serverHost': {
-    flags: ['sh', 'server-host'],
-    label: 'Server Host'
+    flags: ['--sh', '--server-host'],
+    label: 'Server Host',
+    required: true
   },
   'serverUser': {
-    flags: ['su', 'server-user'],
-    label: 'Server User'
+    flags: ['--su', '--server-user'],
+    label: 'Server User',
+    required: true
   },
   'serverPass': {
-    flags: ['sp', 'server-pass'],
-    label: 'Server Password'
+    flags: ['--sp', '--server-pass'],
+    label: 'Server Password',
+    required: true
   },
   'cloudTeam': {
-    flags: ['ct', 'cloud-team'],
-    label: 'Cloud Team'
+    flags: ['--ct', '--cloud-team'],
+    label: 'Cloud Team',
+    required: true
   },
   'cloudUser': {
-    flags: ['cu', 'cloud-user'],
-    label: 'Cloud User'
+    flags: ['--cu', '--cloud-user'],
+    label: 'Cloud User',
+    required: true
   },
   'cloudPass': {
-    flags: ['cp', 'cloud-pass'],
-    label: 'Cloud Password'
+    flags: ['--cp', '--cloud-pass'],
+    label: 'Cloud Password',
+    required: true
   },
   'dryRun': {
-    flags: ['dry', 'dry-run'],
-    label: 'Dry Run'
+    flags: ['--dry', '--dry-run'],
+    label: ''
   }
 }
 
@@ -48,6 +54,7 @@ async function run() {
 
   for (let prop of Object.keys(OPTIONS)) {
     for (let flg of OPTIONS[prop].flags) {
+      flg = flg.replace(/^-+/, '');
       if (flg in args) {
         cfg[prop] = args[flg]
         break;
@@ -57,11 +64,24 @@ async function run() {
 
   try {
     let op = process.argv.pop();
-    let valid = VALID_OPS.indexOf(op!) >= 0 &&
-      Object.keys(OPTIONS).reduce((acc, k) => { acc = acc && !!cfg[k]; return acc }, true);
+    let validOp = VALID_OPS.indexOf(op!) >= 0
+    let validFlags = Object
+      .keys(OPTIONS)
+      .filter(x => OPTIONS[x].required)
+      .reduce((acc, k) => {
+        acc = acc && !!cfg[k];
+        return acc
+      }, true);
+
+    let valid = validOp && validFlags;
 
     if (!valid) {
-      const flags = Object.keys(OPTIONS).map(x => `${OPTIONS[x].flags.map(x => `--${x}`).join('|')} <${OPTIONS[x].label}>`).join(' ');
+      const flags = Object
+        .keys(OPTIONS)
+        .map(x => OPTIONS[x])
+        .map(x => `${!x.required ? '[' : ''}${x.flags.join('|')}${x.label ? ` <${x.label}>` : ''}${!x.required ? ']' : ''}`)
+        .join(' ');
+
       const ops = VALID_OPS.join('|')
       console.log(`[USAGE] ./importer.sh ${flags} [${ops}]`)
       process.exit(1);
