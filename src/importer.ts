@@ -37,7 +37,7 @@ export class BitbucketImporter {
     public serverHost: string,
     public serverUser: string,
     public serverPass: string,
-    public cloudOwner: string,
+    public cloudTeam: string,
     public cloudUser: string,
     public cloudPass: string,
     public cloudHost: string,
@@ -115,7 +115,7 @@ export class BitbucketImporter {
       log(`[Cloning] Project ${pkey}: Repository ${r.slug}`);
       await exec(`git clone --mirror https://${this.serverUser}:${this.serverPass}@${this.serverHost}/scm/${pkey}/${r.slug}.git ${path}`);
       log(`[Pushing] Project ${pkey}: Repository ${r.slug}`);
-      await exec(`git push --mirror https://${this.cloudUser}:${this.cloudPass}@${this.cloudHost}/${this.cloudOwner}/${slug}.git`, { cwd: path })
+      await exec(`git push --mirror https://${this.cloudUser}:${this.cloudPass}@${this.cloudHost}/${this.cloudTeam}/${slug}.git`, { cwd: path })
     } finally {
       await rmdir(path);
     }
@@ -192,7 +192,7 @@ export class BitbucketImporter {
 
         let qualName = `${key}-${r.name}`
 
-        await this.cloudRequest(`/repositories/${this.cloudOwner}/${slug}`, {
+        await this.cloudRequest(`/repositories/${this.cloudTeam}/${slug}`, {
           method: 'POST',
           json: {
             scm: 'git',
@@ -216,7 +216,7 @@ export class BitbucketImporter {
       namespace: (p?) => p ? `[Importing] Project ${p.key}` : `[Importing] Projects`,
       source: this.serverSource(`/projects`),
       processItem: async p => {
-        await this.cloudRequest(`/teams/${this.cloudOwner}/projects/`, {
+        await this.cloudRequest(`/teams/${this.cloudTeam}/projects/`, {
           method: 'POST',
           json: {
             name: p.name,
@@ -233,9 +233,9 @@ export class BitbucketImporter {
   deleteCloudRepositories() {
     return this.cloudRun<Repository>({
       namespace: (r?) => r ? `[Removing] Repository ${r.slug}` : `[Removing] Repositories`,
-      source: this.cloudSource(`/repositories/${this.cloudOwner}`),
+      source: this.cloudSource(`/repositories/${this.cloudTeam}`),
       processItem: r => {
-        return this.cloudRequest(`/repositories/${this.cloudOwner}/${r.slug}`, { method: 'DELETE' });
+        return this.cloudRequest(`/repositories/${this.cloudTeam}/${r.slug}`, { method: 'DELETE' });
       }
     })
   }
@@ -243,9 +243,9 @@ export class BitbucketImporter {
   deleteCloudProjects() {
     return this.cloudRun<Project>({
       namespace: (p?) => p ? `[Removing] Project ${p.key}` : `[Removing] Projects`,
-      source: this.cloudSource(`/teams/${this.cloudOwner}/projects/`),
+      source: this.cloudSource(`/teams/${this.cloudTeam}/projects/`),
       processItem: p => {
-        return this.cloudRequest(`/teams/${this.cloudOwner}/projects/${p.key}`, { method: 'DELETE' });
+        return this.cloudRequest(`/teams/${this.cloudTeam}/projects/${p.key}`, { method: 'DELETE' });
       }
     });
   }
@@ -269,10 +269,10 @@ export class BitbucketImporter {
 
             out.http.push(
               [`${this.serverHost}/scm/${pkey}/${r.slug}.git`,
-              `${this.cloudHost}/${this.cloudOwner}/${slug}.git`])  //http
+              `${this.cloudHost}/${this.cloudTeam}/${slug}.git`])  //http
             out.ssh.push(
-              [`${this.serverHost}/${pkey}/${r.slug}.git`,
-              `${this.cloudHost}:${this.cloudOwner}/${slug}.git`], //ssh,
+              [`${this.serverHost}:${pkey}/${r.slug}.git`,
+              `${this.cloudHost}:${this.cloudTeam}/${slug}.git`], //ssh,
             )
           }
         });
@@ -286,12 +286,12 @@ export class BitbucketImporter {
     let mapping = await this.generateRepoMapping();
 
     let httpConfigs = mapping.http.map(x => [
-      `https://(\'$SERVER_USERNAME\'@)?${x[0]}`,
-      `https://\'$CLOUD_USERNAME\'@${x[1]}`
+      `https://('\${SERVER_USER}'@)?${x[0]}`,
+      `https://'\${CLOUD_USER}'@${x[1]}`
     ]);
 
     let sshConfigs = mapping.ssh.map(x => [
-      `(ssh://)?git@${x[0]}`,
+      `(ssh://)?git@${x[0].replace(/:/, '[:/]')}$`,
       `git@${x[1]}`
     ]);
 
@@ -306,7 +306,7 @@ export class BitbucketImporter {
       TEMP_DIR: TEMP
     };
 
-    const tpl = fs.readFileSync(__dirname + '/user-import.tpl.sh').toString();
+    let tpl = fs.readFileSync(__dirname + '/user-import.tpl.sh').toString();
     return tpl.replace(/%%([^%]+)%%/g, (a, k) => params[k]);
   }
 }

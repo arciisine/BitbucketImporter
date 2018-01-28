@@ -89,7 +89,7 @@ async function run() {
 
     let importer = new BitbucketImporter(
       cfg.serverHost, cfg.serverUser, cfg.serverPass,
-      cfg.cloudOwner, cfg.cloudUser, cfg.cloudPass, cfg.cloudHost,
+      cfg.cloudTeam, cfg.cloudUser, cfg.cloudPass, cfg.cloudHost,
       cfg.dryRun !== undefined);
 
     log(`Starting ${op}`);

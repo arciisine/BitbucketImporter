@@ -9,6 +9,7 @@ DEBUG=0
 DRYRUN_FLAG=0
 COMMENT=0
 CODE_ROOT=$HOME
+KEY_CACHE="$TEMP_DIR/existing.ssh.json"
 
 function read_params() {
   POSITIONAL=()
@@ -120,9 +121,8 @@ function cloud_req() {
 }
 
 function create_ssh() {
-  LABEL="$1"
+  LABEL="${1:-default}"
   KEY="$2"
-  KEY_CACHE="$TEMP_DIR/existing.ssh.json"
 
   if [ ! -e "$KEY_CACHE" ]; then 
     cloud_req "/1.0/users/${CLOUD_USER}/ssh-keys" | jq -r '.[] | (.pk|tostring)+"++"+.label' > $KEY_CACHE
@@ -150,28 +150,26 @@ function create_ssh() {
 
 function convert_local_repo_config() {
   REPO=$1
+  header "  * Updating $REPO/config"
+  
+  TEMP_CONF=$TEMP_DIR/git.`clean_name $REPO`.config;
 
-  if grep 'git.eaiti.com' $REPO/config > /dev/null; then
+  cat $REPO/config | sed -r \
+    %%SED_EXPRESSIONS%%
+    -e 's|(ssh://)?git@'$SERVER_HOST'[:/]~'$SERVER_USER'/(.*)$|git@'$CLOUD_HOST':'$CLOUD_USER'/\2|' \
+    -e 's|https://('$SERVER_USER'@)?'$SERVER_HOST'/scm/~'$SERVER_USER'/(.*)$|https://'$CLOUD_USER'@'$CLOUD_HOST'/'$CLOUD_USER'/\2|' \
+    > $TEMP_CONF
 
-    header "  * Updating $REPO/config"
-    
-    TEMP_CONF=$TEMP_DIR/git.`clean_name $REPO`.config;
+  (diff --suppress-common-line -y $REPO/config $TEMP_CONF > $TEMP_CONF.diff) && CHANGED=0 || CHANGED=1
+  [ $COMMENT -eq 1 ] && echo && cat $TEMP_CONF.diff
 
-    cat $REPO/config | sed -r \
-      %%SED_EXPRESSIONS%%
-      > $TEMP_CONF
+  if [[ $CHANGED -eq 1 ]]; then
+    $DRYRUN cp $REPO/config $REPO/config.bak
+    $DRYRUN cp $TEMP_CONF $REPO/config
+  fi
 
-    (diff --suppress-common-line -y $REPO/config $TEMP_CONF > $TEMP_CONF.diff) && CHANGED=0 || CHANGED=1
-    [ $COMMENT -eq 1 ] && echo && cat $TEMP_CONF.diff
-
-    if [[ $CHANGED -eq 1 ]]; then
-      $DRYRUN cp $REPO/config $REPO/config.bak
-      $DRYRUN cp $TEMP_CONF $REPO/config
-    fi
-
-    [ $CHANGED -eq 1 ] && echo 'changed' || echo 'unmodified'
-    rm $TEMP_CONF*
-  fi  
+  [ $CHANGED -eq 1 ] && echo 'changed' || echo 'unmodified'
+  rm $TEMP_CONF*
 }
 
 function migrate_personal_repo() {
@@ -238,15 +236,19 @@ check_req "success" quit "${SERVER_HOST} credentials invalid"
 #Update all repos from current location
 echo -e "\nConverting local git repo configs"
 for REPO in `find $CODE_ROOT -name '.git' -type d 2> /dev/null`; do
-  convert_local_repo_config $REPO
+  if grep 'git.eaiti.com' $REPO/config > /dev/null; then
+    convert_local_repo_config $REPO
+  fi  
 done
+
+#Remove
+rm -rf $KEY_CACHE 2>&1 > /dev/null
 
 #Migrate SSH Keys
 echo -e "\nMigrating Bitbucket Server Personal SSH Keys"
 for ROW in `server_req '/rest/ssh/1.0/keys' | jq '.values[] | .label+"\t"+.text' -r`; 
 do  
   LABEL=`echo $ROW | awk -F '\t' '{ print $1 }'`
-  LABEL=${LABEL:-default}
   KEY=`echo $ROW | awk -F '\t' '{ print $2 }'`
 
   create_ssh "$LABEL" "$KEY"
