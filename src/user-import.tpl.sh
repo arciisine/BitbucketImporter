@@ -1,12 +1,14 @@
 #!/bin/bash
-CURL_OPTS='-s'
-GIT_OPTS='-q'
-if [[ -n "$DEBUG" ]]; then
-  if [[ $DEBUG -gt 1 ]]; then
-    set -x
-    CURL_OPTS='-v'
-    GIT_OPTS=''
-  fi  
+([[ -n "$DEBUG" ]] || [[ -n "$DRYRUN" ]]) && COMMENT=1 || COMMENT=0
+([[ "$DEBUG" -eq 1 ]]) && VERBOSE=1 || VERBOSE=0
+
+if [ $VERBOSE -eq 1 ]; then
+  set -x
+  CURL_OPTS='-v'
+  GIT_OPTS=''
+else
+  CURL_OPTS='-s'
+  GIT_OPTS='-q'
 fi
 
 CLOUD_USERNAME=$1
@@ -35,18 +37,21 @@ function quit() {
   echo $1; exit $2
 }
 
-function log() {
-  echo
-  if [[ -n "$DRYRUN" ]]; then
-    echo "#DRY_RUN#" ${@}
-  else 
-    echo "#DEBUG#" ${@}
-  fi    
+function clean_name() {
+  echo $1 | sed -r -e 's|[^A-Za-z0-9]+|_|g';
 }
 
-function serverReq() {
+function log() {
+  [ $COMMENT -eq 1 ] && (echo && echo ""${@})
+}
+
+function check_req() {
+  [ $REQ_FAIL -eq 0 ] && echo $1 || $2 "$3"
+}
+
+function server_req() {
   REQ_FAIL=0
-  ([[ -n "$DRYRUN" ]] || [[ -n "$DEBUG" ]]) && log curl "https://"$SERVER_HOST${@} 1>&2
+  [ $COMMENT -eq 1 ] && log curl "https://"$SERVER_HOST${@} 1>&2
   if ! curl $CURL_OPTS -f -H 'Accepts: application/json' -H 'X-Atlassian-Token:no-check' \
     -u "${SERVER_USERNAME}:${SERVER_PASSWORD}" "https://$SERVER_HOST"${@};
   then
@@ -54,9 +59,9 @@ function serverReq() {
   fi  
 }
 
-function cloudReq() {
+function cloud_req() {
   REQ_FAIL=0
-  ([[ -n "$DRYRUN" ]] || [[ -n "$DEBUG" ]]) && log curl "https://api.$CLOUD_HOST"${@} 1>&2
+  [ $COMMENT -eq 1 ] && log curl "https://api.$CLOUD_HOST"${@} 1>&2
   if ! curl $CURL_OPTS -f -H 'Accepts: application/json' \
     -u "${CLOUD_USERNAME}:${CLOUD_PASSWORD}" "https://api.$CLOUD_HOST"${@};
   then
@@ -68,54 +73,60 @@ function cloudReq() {
 echo
 echo "Initializing"
 echo -n "  * Validating ${CLOUD_HOST} credentials... "
-cloudReq '/2.0/user' > /dev/null
-[ $REQ_FAIL -eq 0 ] && echo "done" || quit "${CLOUD_HOST} credentials invalid"
+cloud_req '/2.0/user' > /dev/null
+check_req "success" quit "${CLOUD_HOST} credentials invalid"
 
 echo -n "  * Validating ${SERVER_HOST} credentials... "
-serverReq "/rest/api/1.0/users/$SERVER_USERNAME" > /dev/null
-[ $REQ_FAIL -eq 0 ] && echo "done" || quit "${SERVER_HOST} credentials invalid"
-
+server_req "/rest/api/1.0/users/$SERVER_USERNAME" > /dev/null
+check_req "success" quit "${SERVER_HOST} credentials invalid"
 
 #Update all repos from current location
 echo
 echo "Converting local git repo configs"
 for REPO in `find $PWD -name '.git' -type d`; do
   echo -n "  * Updating $REPO/config... "
-  CHECK=`md5sum $REPO/config`
+  TEMP_CONF=$TEMP_DIR/git.`clean_name $REPO`.config;
 
-  if [[ -n "$DRYRUN" ]]; then
-    $DRYRUN sed -i.bak -r SED_EXPRESSIONS $REPO/config
-  else 
-    sed -i.bak -r \
-      %%SED_EXPRESSIONS%%
-      $REPO/config    
-    DONE_CHECK=`md5sum $REPO/config`
+  cat $REPO/config | sed -r \
+    %%SED_EXPRESSIONS%%
+    > $TEMP_CONF
 
-    [[ ! "$CHECK" == "$DONE_CHECK" ]] && echo "changed" || echo "unmodified"
+  (diff --suppress-common-line -y $REPO/config $TEMP_CONF > $TEMP_CONF.diff) && CHANGED=0 || CHANGED=1
+  [ $COMMENT -eq 1 ] && echo && cat $TEMP_CONF.diff
+
+  if [[ $CHANGED -eq 1 ]]; then
+    $DRYRUN cp $REPO/config $REPO/config.bak
+    $DRYRUN cp $TEMP_CONF $REPO/config
   fi
+
+  [ $CHANGED -eq 1 ] && echo 'changed' || echo 'unmodified'
+  rm $TEMP_CONF*
 done
 
 #Migrate SSH Keys
 echo
 echo "Migrating Personal SSH Keys"
-for ROW in `serverReq '/rest/ssh/1.0/keys' | jq '.values[] | .label+"\t"+.text' -r`; 
+for ROW in `server_req '/rest/ssh/1.0/keys' | jq '.values[] | .label+"\t"+.text' -r`; 
 do  
   LABEL=`echo $ROW | awk -F '\t' '{ print $1 }'`
   LABEL=${LABEL:-default}
   KEY=`echo $ROW | awk -F '\t' '{ print $2 }'`
+
   echo -n "  * Migrating key ${LABEL} to ${CLOUD_HOST}: ${KEY:0:20} ..."
-  $DRYRUN cloudReq "/1.0/users/${CLOUD_USERNAME}/ssh-keys" \
+  $DRYRUN cloud_req "/1.0/users/${CLOUD_USERNAME}/ssh-keys" \
     -d "label=$LABEL" \
     --data-urlencode "key=$KEY" > /dev/null
-  [ $REQ_FAIL -eq 1 ] && echo 'failed' || echo 'success' 
+
+  check_req "done" echo "failed"
 done
 
 #Migrate Personal Repos
 echo
 echo "Migrating personal repositories"
-for REPO in `serverReq '/rest/api/1.0/users/'${SERVER_USERNAME}'/repos' | jq -r '.values[].slug'`; 
+for REPO in `server_req '/rest/api/1.0/users/'${SERVER_USERNAME}'/repos' | jq -r '.values[].slug'`; 
 do  
   echo "  * Moving ${REPO} to ${CLOUD_HOST}"
+  TEMP_PROJ=$TEMP_DIR/project.`clean_name $REPO`.json
 
   echo -n "    - Creating Repository ${REPO} in ${CLOUD_HOST}... "
   echo '{
@@ -124,9 +135,10 @@ do
   "description": "'${REPO}'",
   "is_private": true,
   "fork_policy": "no_public_forks"
-}' > $TEMP_DIR/project.json
-  $DRYRUN cloudReq  "/2.0/repositories/${CLOUD_USERNAME}/${REPO}" -H 'Content-type: application/json' -d "@$TEMP_DIR/project.json" > /dev/null
-  [ $REQ_FAIL -eq 1 ] && echo 'failed' || echo 'success'
+}' > $TEMP_PROJ
+
+  $DRYRUN cloud_req  "/2.0/repositories/${CLOUD_USERNAME}/${REPO}" -H 'Content-type: application/json' -d "@$TEMP_PROJ" > /dev/null
+  check_req "done" echo "failed"
 
   if [ $REQ_FAIL -eq 0 ]; then
     GIT_DIR=$TEMP_DIR/$REPO
@@ -146,6 +158,8 @@ do
 
     $DRYRUN rm -rf $GIT_DIR 2> /dev/null
   fi  
+
+  rm $TEMP_PROJ
 done
 
 IFS="$OLDIFS"

@@ -55,6 +55,22 @@ export class BitbucketImporter {
     this.serverRun = p => Queue.run(p, 20);
   }
 
+  async verifyCredentials() {
+    try {
+      await this.cloudRequest('/2.0/user');
+    } catch (e) {
+      log(`${this.cloudHost} credentials invalid`)
+      throw e;
+    }
+
+    try {
+      await this.serverRequest(`/rest/api/1.0/users/${this.serverCredentials.split(':')[0]}`);
+    } catch (e) {
+      log(`${this.serverHost} credentials invalid`)
+      throw e;
+    }
+  }
+
   getSource<T>(req: Requestor<{ values: T[] }>, path: string, pageSize: number, ph: PageHandler, cache: boolean = true): QueueSource<T> {
     let key = `${req.name}||${path}`;
     let el = this.sourceCache[key];
@@ -241,7 +257,7 @@ export class BitbucketImporter {
               `${this.cloudHost}/${this.cloudOwner}/${slug}.git`])  //http
             out.ssh.push(
               [`${this.serverHost}/${pkey}/${r.slug}.git`,
-              `${this.cloudHost}:${this.cloudOwner}/${this.cloudOwner}/${slug}.git`], //ssh,
+              `${this.cloudHost}:${this.cloudOwner}/${slug}.git`], //ssh,
             )
           }
         });

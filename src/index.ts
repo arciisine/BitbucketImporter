@@ -33,6 +33,8 @@ async function run() {
     let importer = new BitbucketImporter(args.sHost, args.sCreds, args.cOwner, args.cCreds);
 
     log(`Starting ${op}`);
+    await importer.verifyCredentials();
+
     switch (op) {
       case 'archive':
         await importer.archiveServerProjects();
