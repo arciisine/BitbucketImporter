@@ -82,7 +82,7 @@ export class BitbucketImporter {
     let path = `${TEMP}/${slug}`;
     try {
       log(`[Cloning] Project ${pkey}: Repository ${r.key}`);
-      await exec(`git clone --mirror https://${this.serverCredentials}@${this.serverHost}/scm/${pkey}/${r.key}.git ${path}`);
+      await exec(`git clone --mirror https://${this.serverCredentials}@${this.serverHost}/scm/${pkey}/${r.slug}.git ${path}`);
       log(`[Pushing] Project ${pkey}: Repository ${r.key}`);
       await exec(`git push --mirror https://${this.cloudCredentials}@${this.cloudHost}/${this.cloudOwner}/${slug}.git`, { cwd: path })
     } finally {
@@ -234,11 +234,13 @@ export class BitbucketImporter {
           source: this.serverSource(`/projects/${key}/repos`),
           processItem: async r => {
             const slug = this.genCloudSlug(key, r);
+            const pkey = key.toLowerCase();
+
             out.http.push(
-              [`${this.serverHost}/scm/${key}/${r.slug}.git`,
+              [`${this.serverHost}/scm/${pkey}/${r.slug}.git`,
               `${this.cloudHost}/${this.cloudOwner}/${slug}.git`])  //http
             out.ssh.push(
-              [`${this.serverHost}/${key}/${r.slug}.git`,
+              [`${this.serverHost}/${pkey}/${r.slug}.git`,
               `${this.cloudHost}:${this.cloudOwner}/${this.cloudOwner}/${slug}.git`], //ssh,
             )
           }

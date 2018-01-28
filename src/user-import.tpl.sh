@@ -80,7 +80,8 @@ serverReq "/rest/api/1.0/users/$SERVER_USERNAME" > /dev/null
 echo
 echo "Converting local git repo configs"
 for REPO in `find $PWD -name '.git' -type d`; do
-  echo "  * Updating $REPO/config"
+  echo -n "  * Updating $REPO/config... "
+  CHECK=`md5sum $REPO/config`
 
   if [[ -n "$DRYRUN" ]]; then
     $DRYRUN sed -i.bak -r SED_EXPRESSIONS $REPO/config
@@ -88,7 +89,10 @@ for REPO in `find $PWD -name '.git' -type d`; do
     sed -i.bak -r \
       %%SED_EXPRESSIONS%%
       $REPO/config    
-  fi   
+    DONE_CHECK=`md5sum $REPO/config`
+
+    [[ ! "$CHECK" == "$DONE_CHECK" ]] && echo "changed" || echo "unmodified"
+  fi
 done
 
 #Migrate SSH Keys
@@ -124,22 +128,24 @@ do
   $DRYRUN cloudReq  "/2.0/repositories/${CLOUD_USERNAME}/${REPO}" -H 'Content-type: application/json' -d "@$TEMP_DIR/project.json" > /dev/null
   [ $REQ_FAIL -eq 1 ] && echo 'failed' || echo 'success'
 
-  GIT_DIR=$TEMP_DIR/$REPO
+  if [ $REQ_FAIL -eq 0 ]; then
+    GIT_DIR=$TEMP_DIR/$REPO
 
-  rm -rf $GIT_DIR 2> /dev/null
+    rm -rf $GIT_DIR 2> /dev/null
 
-  echo -n "    - Cloning from ${SERVER_HOST} ... "
-  $DRYRUN git clone $GIT_OPTS --mirror https://$SERVER_USERNAME:$SERVER_PASSWORD@$SERVER_HOST/scm/~$SERVER_USERNAME/$REPO.git $GIT_DIR
-  [ $? -eq 0 ] && echo "done" || echo "failed"
+    echo -n "    - Cloning from ${SERVER_HOST} ... "
+    $DRYRUN git clone $GIT_OPTS --mirror https://$SERVER_USERNAME:$SERVER_PASSWORD@$SERVER_HOST/scm/~$SERVER_USERNAME/$REPO.git $GIT_DIR
+    [ $? -eq 0 ] && echo "done" || echo "failed"
 
-  $DRYRUN pushd $GIT_DIR > /dev/null
-  echo -n "    - Pushing to ${CLOUD_HOST} ... "
-  $DRYRUN git push $GIT_OPTS --mirror https://$CLOUD_USERNAME:$CLOUD_PASSWORD@$CLOUD_HOST/$CLOUD_USERNAME/$REPO.git 
-  [ $? -eq 0 ] && echo "done" || echo "failed"
- 
-  $DRYRUN popd > /dev/null
+    $DRYRUN pushd $GIT_DIR > /dev/null
+    echo -n "    - Pushing to ${CLOUD_HOST} ... "
+    $DRYRUN git push $GIT_OPTS --mirror https://$CLOUD_USERNAME:$CLOUD_PASSWORD@$CLOUD_HOST/$CLOUD_USERNAME/$REPO.git 
+    [ $? -eq 0 ] && echo "done" || echo "failed"
+   
+    $DRYRUN popd > /dev/null
 
-  $DRYRUN rm -rf $GIT_DIR 2> /dev/null
+    $DRYRUN rm -rf $GIT_DIR 2> /dev/null
+  fi  
 done
 
 IFS="$OLDIFS"
