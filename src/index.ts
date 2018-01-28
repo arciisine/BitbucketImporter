@@ -21,7 +21,7 @@ async function run() {
   try {
     let op = process.argv.pop();
     let valid = VALID_OPS.indexOf(op!) >= 0 &&
-      Object.keys(OPTIONS).reduce((acc, k) => { acc = acc && !args[k]; return acc }, true);
+      Object.keys(OPTIONS).reduce((acc, k) => { acc = acc && !!args[k]; return acc }, true);
 
     if (!valid) {
       const flags = Object.keys(OPTIONS).map(x => `-${x} <${OPTIONS[x]}>`).join(' ');
