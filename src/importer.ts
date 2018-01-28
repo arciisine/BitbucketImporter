@@ -84,7 +84,7 @@ export class BitbucketImporter {
       log(`[Cloning] Project ${pkey}: Repository ${r.key}`);
       await exec(`git clone --mirror https://${this.serverCredentials}@${this.serverHost}/scm/${pkey}/${r.key}.git ${path}`);
       log(`[Pushing] Project ${pkey}: Repository ${r.key}`);
-      await exec(`git push --mirror https://${this.cloudCredentials}@bitbucket.org/${this.cloudOwner}/${slug}.git`, { cwd: path })
+      await exec(`git push --mirror https://${this.cloudCredentials}@${this.cloudHost}/${this.cloudOwner}/${slug}.git`, { cwd: path })
     } finally {
       await rmdir(path);
     }
@@ -266,14 +266,14 @@ export class BitbucketImporter {
 
     const sedExpressions = configs.map(r => `      -e 's|${r[0]}|${r[1]}|' \\`).join('\n');
 
-    const tpl = fs.readFileSync(__dirname + '/user-import.tpl.sh').toString();
-
     const params: { [key: string]: any } = {
       SED_EXPRESSIONS: sedExpressions,
       SERVER_HOST: this.serverHost,
-      CLOUD_HOST: this.cloudHost
+      CLOUD_HOST: this.cloudHost,
+      TEMP_DIR: TEMP
     };
 
+    const tpl = fs.readFileSync(__dirname + '/user-import.tpl.sh').toString();
     return tpl.replace(/%%([^%]+)%%/g, (a, k) => params[k]);
   }
 }
