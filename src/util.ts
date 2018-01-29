@@ -20,7 +20,7 @@ export function log(msg: string, ...args: any[]) {
 }
 
 export async function exec(command: string, opts: childProcess.ExecOptions = {}) {
-  return new Promise((resolve, reject) => {
+  return new Promise<{ stdout: string, stderr: string }>((resolve, reject) => {
     childProcess.exec(command, opts, (err, stdout, stderr) => {
       if (err) {
         return reject(err);

@@ -62,8 +62,8 @@ export class BitbucketImporter {
     this.cloudSource = (p, c) => this.getSource(this.cloudRequest, p, 100,
       (page, size) => ({ pagelen: size, page }), c);
 
-    this.cloudRun = p => Queue.run(p, 3, 3000);
-    this.serverRun = p => Queue.run(p, 20);
+    this.cloudRun = p => Queue.run(p, 3, 2000);
+    this.serverRun = p => Queue.run(p, 5);
 
     if (dryRun) {
       (log as any).prefix = '[DRY RUN]'
@@ -308,5 +308,19 @@ export class BitbucketImporter {
 
     let tpl = fs.readFileSync(__dirname + '/user-import.tpl.sh').toString();
     return tpl.replace(/%%([^%]+)%%/g, (a, k) => params[k]);
+  }
+
+  async verifyImported() {
+    let mapping = await this.generateRepoMapping();
+
+    for (let [local, remote] of mapping.http) {
+      log(`[Verify] ${remote}`);
+      let res = await exec(`git ls-remote https://${this.cloudUser}:${this.cloudPass}@${remote}`);
+      if (!res.stdout.trim()) {
+        log(`[Verify] Failed to import ${remote}`);
+      }
+    }
+
+    return mapping;
   }
 }

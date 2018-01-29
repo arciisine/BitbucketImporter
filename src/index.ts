@@ -2,7 +2,7 @@ import * as minimist from 'minimist';
 import { BitbucketImporter } from './importer';
 import { log } from './util';
 
-const VALID_OPS = ['archive', 'import', 'userscript'];
+const VALID_OPS = ['archive', 'import', 'userscript', 'verify'];
 
 const OPTIONS: { [key: string]: { flags: string[], label: string, required?: boolean } } = {
   'serverHost': {
@@ -107,6 +107,9 @@ async function run() {
       case 'userscript':
         let res = await importer.generateUserMigrationScript();
         console.log(res);
+        break;
+      case 'verify':
+        await importer.verifyImported();
         break;
     }
     log('Done');
