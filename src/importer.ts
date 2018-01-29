@@ -183,6 +183,16 @@ export class BitbucketImporter {
     });
   }
 
+  disableServerProjects() {
+    return this.serverRun<Project>({
+      namespace: (p?) => p ? `[Disabling] Project ${p.key}` : `[Disabling] Projects`,
+      source: this.serverSource('/projects'),
+      processItem: async p => {
+        await this.serverRequest(`/projects/${p.key}/permissions/PROJECT_READ/all`, { method: 'POST', qs: { allow: false } });
+      }
+    });
+  }
+
   importRepositories(key: string) {
     return this.serverRun<Repository>({
       namespace: (r?) => r ? `[Importing] Project ${key}: Repository ${r.slug}` : `[Importing] Project ${key} Repositories`,
