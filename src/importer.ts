@@ -62,7 +62,7 @@ export class BitbucketImporter {
     this.cloudSource = (p, c) => this.getSource(this.cloudRequest, p, 100,
       (page, size) => ({ pagelen: size, page }), c);
 
-    this.cloudRun = p => Queue.run(p, 3, 2000);
+    this.cloudRun = p => Queue.run(p, 3, 3000);
     this.serverRun = p => Queue.run(p, 20);
 
     if (dryRun) {

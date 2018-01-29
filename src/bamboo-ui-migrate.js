@@ -1,12 +1,16 @@
-async function BambooMigrateRepos(newRepos) {
+async function BambooMigrateRepos(passCredId, sshCredId, newRepos) {
   const SECTION = document.querySelector('section.aui-page-panel-content');
   const LIST_WRAPPER = SECTION.querySelector('#panel-editor-list');
   const FORM_WRAPPER = SECTION.querySelector('#panel-editor-config');
-  const ADD_REPO = LIST_WRAPPER.querySelector('#addRepository');
 
   function pending(x) {
     x = `${x||''}`;
     return x.trim().indexOf('[OLD]') !== 0 && x.indexOf('[BC]') < 0;
+  }
+
+  function setField(qry, val) {
+    jQuery(qry).val(val);
+    jQuery(qry).trigger('change');
   }
 
   let wait = x => new Promise(r => setTimeout(r, x));
@@ -37,8 +41,8 @@ async function BambooMigrateRepos(newRepos) {
       let nameField = form.querySelector('#repositoryName');
 
       if (pending(('' + nameField.value))) {
-        nameField.value = `[OLD] ${nameField.value}`;
-        form.querySelector('#updateLinkedRepository_save').click();
+        setField(nameField, `[OLD] ${nameField.value}`);
+        $('#updateLinkedRepository_save').click();
         await wait(3000);
       }
     }
@@ -46,49 +50,63 @@ async function BambooMigrateRepos(newRepos) {
 
   // Create new repos
   for (let repo of (newRepos || [])) {
-    ADD_REPO.click();
-    await wait(1000);
+    try {
+      jQuery('#addRepository').click();
+      await wait(1000);
 
-    let dialog = document.querySelector('#repository-types-dialog');
-    let catBtn;
+      let dialog = document.querySelector('#repository-types-dialog');
+      let catBtn;
 
-    for (let btn of dialog.querySelectorAll('.repository-type-category-new')) {
-      if (btn.innerText.indexOf('Bitbucket Cloud') >= 0) {
-        catBtn = btn;
+      for (let btn of dialog.querySelectorAll('.repository-type-category-new')) {
+        if (btn.innerText.indexOf('Bitbucket Cloud') >= 0) {
+          catBtn = btn;
+          break;
+        }
+      }
+
+      if (!catBtn) {
         break;
       }
-    }
 
-    if (!catBtn) {
-      break;
-    }
+      catBtn.click();
+      await wait(1000);
 
-    catBtn.click();
-    await wait(1000);
+      console.log('Processing', repo);
 
-    let form = FORM_WRAPPER.querySelector('form');
-    form.querySelector('#repositoryName').value = repo.name.trim() + ' [BC]';
+      setField('#repositoryName', '[BC] ' + repo.name.trim());
+      setField('#createLinkedRepository_repository_bitbucket_passwordSharedCredentials_id', passCredId);
 
-    let passwordCreds = form.querySelector('#createLinkedRepository_repository_bitbucket_passwordSharedCredentials_id');
-    passwordCreds.value = '24969220';
+      let repoSelect = document.querySelector('#createLinkedRepository_repository_bitbucket_repository');
 
-    /**
-     * @type HTMLSelectElement
-     */
-    let repoSelect = form.querySelector('#createLinkedRepository_repository_bitbucket_repository');
+      if (repoSelect.options.length === 0) {
+        jQuery('#repository-bitbucket-load-repositories').click();
+        console.log('Loading repos');
+        await wait(2000);
+      }
 
-    if (repoSelect.options.length === 0) {
-      form.querySelector('#repository-bitbucket-load-repositories').click();
+      setField(repoSelect, repo.path);
+
+      console.log('Set Repo');
+
+      setField('#createLinkedRepository_repository_bitbucket_sshSharedCredentials_id', sshCredId);
+      console.log('Set SSH Cred Id');
+
+      jQuery('#test-connection-com-atlassian-bamboo-plugins-atlassian-bamboo-plugin-bitbucket-bbCloud').click();
+
       await wait(2000);
+      console.log('Test SSH Connection');
+
+      if (repo.branch) {
+        setField('#createLinkedRepository_repository_stash_branch', repo.branch);
+        console.log('Set branch');
+      }
+
+      jQuery('#createLinkedRepository_save').click();
+
+      await wait(3000);
+    } catch (e) {
+      await wait(2000);
+      console.error('Failed to create', e, repo);
     }
-    repoSelect.value = repo.path;
-
-    let credSelect = form.querySelector('#createLinkedRepository_repository_bitbucket_sshSharedCredentials_id');
-    credSelect.value = '24969217';
-
-    form.querySelector('#test-connection-com-atlassian-bamboo-plugins-atlassian-bamboo-plugin-bitbucket-bbCloud').click();
-    await wait(2000);
-
-    form.querySelector('#createLinkedRepository_save').click();
   }
 }
